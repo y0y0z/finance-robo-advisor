@@ -13,13 +13,18 @@ import org.example.finance.model.User;
 import org.example.finance.model.Warning;
 import org.example.finance.repository.AiAnalysisRecordRepository;
 import org.example.finance.config.DeepSeekProperties;
-import org.example.finance.model.UserProfile;
+import org.example.finance.exception.AiServiceUnavailableException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -42,17 +47,37 @@ public class AIService {
     private WarningService warningService;
     @Autowired
     private AiAnalysisRecordRepository recordRepository;
+    @Autowired
+    private AiPromptService aiPromptService;
 
     @Autowired
     private DeepSeekProperties deepSeekProps;
 
     @Autowired
-    private UserProfileService userProfileService;
-
-    @Autowired
-    private MarketSentimentService marketSentimentService;
+    private OkHttpClient httpClient;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Value("${qwen.api.key:}")
+    private String qwenKey;
+    @Value("${qwen.api.url:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}")
+    private String qwenUrl;
+    @Value("${qwen.api.model:qwen-plus}")
+    private String qwenModel;
+
+    @Value("${kimi.api.key:}")
+    private String kimiKey;
+    @Value("${kimi.api.url:https://api.moonshot.cn/v1/chat/completions}")
+    private String kimiUrl;
+    @Value("${kimi.api.model:kimi-k2-0711-preview}")
+    private String kimiModel;
+
+    @Value("${gemini.api.key:}")
+    private String geminiKey;
+    @Value("${gemini.api.url:https://generativelanguage.googleapis.com/v1beta/openai/chat/completions}")
+    private String geminiUrl;
+    @Value("${gemini.api.model:gemini-2.5-flash}")
+    private String geminiModel;
 
     /**
      * 保存 AI 分析记录到数据库，失败时仅打日志不影响主流程
@@ -80,10 +105,12 @@ public class AIService {
     public String generateInvestmentAdvice(User user) {
         long start = System.currentTimeMillis();
         try {
-            String prompt = buildPrompt(user);
-            String result = callDeepSeekApi(prompt);
+            String prompt = aiPromptService.buildPortfolioPrompt(user);
+            String result = generateReviewedPortfolioAdvice(prompt);
             saveRecord(user, "PORTFOLIO", "整体持仓分析", result, System.currentTimeMillis() - start);
             return result;
+        } catch (AiServiceUnavailableException e) {
+            throw e;
         } catch (Exception e) {
             log.error("AI 分析调用失败: {}", e.getMessage());
             return buildFallbackAdvice(user);
@@ -102,7 +129,7 @@ public class AIService {
     public String generateStockAdvice(User user, String code, String name) {
         long start = System.currentTimeMillis();
         try {
-            String prompt = buildStockPrompt(user, code, name);
+            String prompt = aiPromptService.buildStockPrompt(user, code, name);
             String result = callDeepSeekApi(prompt);
             saveRecord(user, "STOCK", name + "（" + code + "）", result, System.currentTimeMillis() - start);
             return result;
@@ -113,239 +140,243 @@ public class AIService {
         }
     }
 
-    /**
-     * 构建针对单只标的的 Prompt
-     */
-    private String buildStockPrompt(User user, String code, String name) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("请对以下股票/基金进行深度投资分析：\n\n");
+    private String generateReviewedPortfolioAdvice(String prompt) throws Exception {
+        List<CompletableFuture<AdviceCandidate>> tasks = List.of(
+                generateCandidateAsync("DeepSeek", deepSeekProps.getUrl(), deepSeekProps.getKey(), deepSeekProps.getModel(), prompt),
+                generateCandidateAsync("Qwen", qwenUrl, qwenKey, qwenModel, prompt),
+                generateCandidateAsync("Kimi", kimiUrl, kimiKey, kimiModel, prompt)
+        );
+        CompletableFuture.allOf(tasks.toArray(new CompletableFuture[0])).join();
 
-        // 该标的基本行情
-        List<Stock> allStocks = stockService.getAllStocks();
-        Stock target = allStocks.stream()
-                .filter(s -> code.equals(s.getCode()))
-                .findFirst().orElse(null);
-
-        if (target != null) {
-            prompt.append("【").append(name).append("（").append(code).append("）基本信息】\n");
-            prompt.append(String.format("- 当前价格：%s 元\n", target.getPrice()));
-            if (target.getPriceChange() != null)
-                prompt.append(String.format("- 今日涨跌：%s 元（%s%%）\n",
-                        target.getPriceChange(), target.getChangePercent()));
-            if (target.getPe() != null)
-                prompt.append(String.format("- 市盈率（PE）：%s\n", target.getPe()));
-            if (target.getPb() != null)
-                prompt.append(String.format("- 市净率（PB）：%s\n", target.getPb()));
-            if (target.getNav() != null)
-                prompt.append(String.format("- 基金净值：%s\n", target.getNav()));
-            if (target.getMarket() != null)
-                prompt.append(String.format("- 所属市场：%s\n", target.getMarket()));
-            prompt.append("\n");
-        }
-
-        // 用户持仓中该标的的情况
-        List<Asset> assets = assetService.getUserAssets(user);
-        assets.stream()
-                .filter(a -> code.equals(a.getCode()))
-                .findFirst()
-                .ifPresent(a -> {
-                    BigDecimal cost = a.getAmount().multiply(a.getPurchasePrice());
-                    BigDecimal profit = a.getTotalValue().subtract(cost);
-                    prompt.append("【用户持仓情况】\n");
-                    prompt.append(String.format("- 持有 %s 股，买入价 %s 元，当前价 %s 元\n",
-                            a.getAmount(), a.getPurchasePrice(), a.getCurrentPrice()));
-                    prompt.append(String.format("- 市值 %s 元，浮动收益 %s%s 元\n\n",
-                            a.getTotalValue(),
-                            profit.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "",
-                            profit));
-                });
-
-        // 该标的相关预警
-        List<Warning> warnings = warningService.getTriggeredWarningsByUser(user).stream()
-                .filter(w -> code.equals(w.getCode())).toList();
-        if (!warnings.isEmpty()) {
-            prompt.append("【已触发预警】\n");
-            for (Warning w : warnings) {
-                prompt.append(String.format("- %s 触发（触发价 %s 元）：%s\n",
-                        w.getStatus(), w.getTriggeredPrice(), w.getMeaning()));
-            }
-            prompt.append("\n");
-        }
-
-        // 与该标的相关的新闻（按代码和名称搜索）
-        List<News> allNews = newsService.getAllNews(user);
-        List<News> relatedNews = allNews.stream()
-                .filter(n -> {
-                    String kw = n.getKeyword();
-                    String title = n.getTitle() != null ? n.getTitle() : "";
-                    return (kw != null && (kw.contains(name) || kw.contains(code)))
-                            || title.contains(name) || title.contains(code);
-                })
-                .limit(8)
+        List<AdviceCandidate> candidates = tasks.stream()
+                .map(CompletableFuture::join)
+                .filter(c -> c != null && !isBlank(c.content()))
                 .toList();
 
-        // 若没有精确匹配，取最新5条通用财经新闻
-        List<News> newsToShow = relatedNews.isEmpty()
-                ? allNews.stream().limit(5).toList()
-                : relatedNews;
-
-        if (!newsToShow.isEmpty()) {
-            prompt.append(relatedNews.isEmpty()
-                    ? "【最新财经新闻（未找到专项新闻，以下为近期市场动态）】\n"
-                    : "【" + name + " 相关新闻（最多8条）】\n");
-            newsToShow.forEach(n -> prompt.append(String.format("- 【%s】%s（来源：%s）\n",
-                    n.getCategory() != null ? n.getCategory() : "财经",
-                    n.getTitle(), n.getSource())));
-            prompt.append("\n");
+        if (candidates.isEmpty()) {
+            throw new AiServiceUnavailableException("当前没有可用的 AI 候选模型，请检查 API Key 配置或稍后重试");
+        }
+        if (candidates.size() == 1 || isBlank(geminiKey)) {
+            AdviceCandidate only = candidates.get(0);
+            return only.content() + buildSingleCandidateNote(only);
         }
 
-        prompt.append("请基于以上数据，生成一份针对 **").append(name)
-                .append("（").append(code).append("）** 的专项投资分析报告，要求：\n");
-        prompt.append("1. 从技术面和基本面分析当前价格位置和趋势\n");
-        prompt.append("2. 结合相关新闻分析近期利好/利空因素\n");
-        prompt.append("3. 给出明确的操作建议：买入/持有/减仓/卖出，并说明理由\n");
-        prompt.append("4. 给出合理的止盈止损参考价位\n");
-        prompt.append("5. 分析主要投资风险\n");
-        prompt.append("6. 输出格式使用 Markdown，语言专业简洁，结论明确可操作\n");
+        Collections.shuffle(candidates);
+        for (int i = 0; i < candidates.size(); i++) {
+            candidates.set(i, candidates.get(i).withCode(String.valueOf((char) ('A' + i))));
+        }
 
-        return prompt.toString();
+        ReviewResult review;
+        try {
+            review = reviewCandidates(prompt, candidates);
+        } catch (Exception e) {
+            log.warn("Gemini review failed, use first candidate: {}", e.getMessage());
+            AdviceCandidate first = candidates.stream()
+                    .filter(c -> "DeepSeek".equals(c.provider()))
+                    .findFirst()
+                    .orElse(candidates.get(0));
+            return first.content() + buildReviewFailureNote(first, e.getMessage());
+        }
+
+        AdviceCandidate selected = candidates.stream()
+                .max(Comparator.comparingInt(c -> review.totalScore(c.code())))
+                .orElse(candidates.get(0));
+
+        return selected.content() + buildReviewSummary(selected, review);
     }
 
-    /**
-     * 构建发送给 DeepSeek 的完整 Prompt
-     * 包含：系统角色设定 + 用户持仓 + 股票行情 + 新闻摘要 + 触发预警
-     */
-    private String buildPrompt(User user) {
-        StringBuilder prompt = new StringBuilder();
+    private CompletableFuture<AdviceCandidate> generateCandidateAsync(String provider, String url, String key,
+                                                                      String model, String prompt) {
+        return CompletableFuture.supplyAsync(() -> generateCandidate(provider, url, key, model, prompt));
+    }
 
-        // 用户风险画像（如有）
-        userProfileService.findByUser(user).ifPresent(p -> {
-            String horizonLabel = switch (p.getInvestmentHorizon() == null ? "" : p.getInvestmentHorizon()) {
-                case "LONG"   -> "长期（>5年）";
-                case "MEDIUM" -> "中期（1-5年）";
-                default       -> "短期（<1年）";
-            };
-            String goalLabel = switch (p.getInvestmentGoal() == null ? "" : p.getInvestmentGoal()) {
-                case "WEALTH_GROWTH" -> "财富增值";
-                case "INCOME"        -> "稳定收益";
-                case "PRESERVATION"  -> "资产保值";
-                case "SPECULATION"   -> "高风险投机";
-                default              -> p.getInvestmentGoal();
-            };
-            prompt.append("【用户风险画像】\n");
-            prompt.append(String.format("- 风险等级：%s（评分 %d/100）\n",
-                    org.example.finance.constant.RiskLevel.label(p.getRiskLevel()), p.getRiskScore()));
-            prompt.append(String.format("- 投资目标：%s，期限：%s\n", goalLabel, horizonLabel));
-            prompt.append(String.format("- 最大可接受亏损：%d%%，偏好资产：%s\n",
-                    p.getMaxLossPercent(), p.getPreferredAssets()));
-            prompt.append(String.format("- 月结余：%s元，流动性需求：%s\n\n",
-                    p.getMonthlySavings(), p.getLiquidityNeed()));
-        });
-
-        // 用户持仓信息
-        List<Asset> assets = assetService.getUserAssets(user);
-        if (!assets.isEmpty()) {
-            prompt.append("【用户当前持仓】\n");
-            for (Asset asset : assets) {
-                BigDecimal cost = asset.getAmount().multiply(asset.getPurchasePrice());
-                BigDecimal profit = asset.getTotalValue().subtract(cost);
-                String profitStr = profit.compareTo(BigDecimal.ZERO) >= 0
-                        ? "盈利 " + profit + " 元"
-                        : "亏损 " + profit.abs() + " 元";
-                prompt.append(String.format("- %s（%s）%s，持有 %s 股，买入价 %s 元，当前价 %s 元，市值 %s 元，%s\n",
-                        asset.getName(), asset.getCode(), asset.getType(),
-                        asset.getAmount(), asset.getPurchasePrice(),
-                        asset.getCurrentPrice(), asset.getTotalValue(), profitStr));
-            }
-            prompt.append("\n");
+    private AdviceCandidate generateCandidate(String provider, String url, String key, String model, String prompt) {
+        if (isBlank(key) || isBlank(url) || isBlank(model)) {
+            log.info("Skip {} candidate because API config is incomplete", provider);
+            return null;
         }
-
-        // 股票/基金行情
-        List<Stock> stocks = stockService.getAllStocks();
-        if (!stocks.isEmpty()) {
-            prompt.append("【关注的股票/基金行情】\n");
-            for (Stock stock : stocks) {
-                String trend = stock.getChangePercent() != null &&
-                        stock.getChangePercent().compareTo(BigDecimal.ZERO) >= 0 ? "↑" : "↓";
-                prompt.append(String.format("- %s（%s）%s，价格 %s 元，涨跌幅 %s%% %s，市场：%s",
-                        stock.getName(), stock.getCode(), stock.getType(),
-                        stock.getPrice(), stock.getChangePercent(), trend, stock.getMarket()));
-                if ("股票".equals(stock.getType()) && stock.getPe() != null) {
-                    prompt.append(String.format("，市盈率 %s，市净率 %s", stock.getPe(), stock.getPb()));
-                }
-                if ("基金".equals(stock.getType()) && stock.getNav() != null) {
-                    prompt.append(String.format("，净值 %s", stock.getNav()));
-                }
-                prompt.append("\n");
-            }
-            prompt.append("\n");
+        try {
+            String content = callOpenAiCompatibleApi(url, key, model, prompt,
+                    "You are a professional personal robo-advisor. Answer in Chinese Markdown. "
+                            + "Use the provided profile, holdings, warnings, news, sentiment and goals. "
+                            + "Do not mention your model name or provider name. "
+                            + "Do not promise returns or give absolute buy/sell orders.",
+                    0.7, 4000);
+            return new AdviceCandidate("", provider, content);
+        } catch (Exception e) {
+            log.warn("{} candidate generation failed: {}", provider, e.getMessage());
+            return null;
         }
+    }
 
-        // 触发的预警
-        List<Warning> triggeredWarnings = warningService.getTriggeredWarningsByUser(user);
-        if (!triggeredWarnings.isEmpty()) {
-            prompt.append("【已触发的预警（需要重点关注）】\n");
-            for (Warning w : triggeredWarnings) {
-                String statusLabel = switch (w.getStatus()) {
-                    case "WARNING" -> "价格预警";
-                    case "PROFIT"  -> "止盈触发";
-                    case "LOSS"    -> "止损触发";
-                    default        -> w.getStatus();
-                };
-                prompt.append(String.format("- %s（%s）：%s，触发价格 %s 元，预设含义：%s\n",
-                        w.getName(), w.getCode(), statusLabel,
-                        w.getTriggeredPrice(), w.getMeaning()));
-            }
-            prompt.append("\n");
-        }
+    private ReviewResult reviewCandidates(String originalPrompt, List<AdviceCandidate> candidates) throws Exception {
+        String reviewPrompt = aiPromptService.buildReviewPrompt(
+                originalPrompt,
+                candidates.stream()
+                        .map(c -> new AiPromptService.ReviewCandidateContext(c.code(), c.content()))
+                        .toList());
 
-        // 最新财经新闻
-        List<News> newsList = newsService.getAllNews(user);
-        if (!newsList.isEmpty()) {
-            prompt.append("【最新财经新闻（最多5条）】\n");
-            newsList.stream().limit(5).forEach(news ->
-                    prompt.append(String.format("- 【%s】%s（来源：%s）\n",
-                            news.getCategory(), news.getTitle(), news.getSource())));
-            prompt.append("\n");
-        }
+        String json = callOpenAiCompatibleApi(geminiUrl, geminiKey, geminiModel, reviewPrompt,
+                "You are an impartial evaluator for robo-advisor reports. Return strict JSON only.",
+                0.2, 2000);
+        return parseReviewResult(json);
+    }
 
-        // 仓位量化：计算各标的占比
-        if (!assets.isEmpty()) {
-            BigDecimal totalValue = assets.stream()
-                    .map(Asset::getTotalValue)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-            if (totalValue.compareTo(BigDecimal.ZERO) > 0) {
-                prompt.append("【当前仓位占比】\n");
-                for (Asset a : assets) {
-                    BigDecimal pct = a.getTotalValue()
-                            .multiply(BigDecimal.valueOf(100))
-                            .divide(totalValue, 1, java.math.RoundingMode.HALF_UP);
-                    prompt.append(String.format("- %s（%s）：占比 %s%%，市值 %s 元\n",
-                            a.getName(), a.getCode(), pct, a.getTotalValue()));
-                }
-                prompt.append("\n");
+    private ReviewResult parseReviewResult(String raw) throws Exception {
+        JsonNode root = objectMapper.readTree(extractJson(raw));
+        List<CandidateScore> scores = new ArrayList<>();
+        JsonNode scoreNodes = root.path("scores");
+        if (scoreNodes.isArray()) {
+            for (JsonNode n : scoreNodes) {
+                scores.add(new CandidateScore(
+                        n.path("candidate").asText(""),
+                        clampScore(n.path("profileConsistency").asInt(0)),
+                        clampScore(n.path("holdingSpecificity").asInt(0)),
+                        clampScore(n.path("marketSentimentUse").asInt(0)),
+                        clampScore(n.path("newsUse").asInt(0)),
+                        clampScore(n.path("goalConsistency").asInt(0)),
+                        clampScore(n.path("riskWarning").asInt(0)),
+                        clampScore(n.path("actionability").asInt(0)),
+                        clampScore(n.path("safety").asInt(0)),
+                        n.path("reason").asText("")
+                ));
             }
         }
+        if (scores.isEmpty()) {
+            throw new IllegalArgumentException("review scores are empty");
+        }
+        return new ReviewResult(scores);
+    }
 
-        prompt.append("请基于以上数据，为该用户生成个性化投资分析报告，要求：\n");
-        prompt.append("1. 结合用户实际持仓分析盈亏原因和风险\n");
-        prompt.append("2. 对已触发的预警给出明确的操作建议（是否止盈/止损）\n");
-        prompt.append("3. 结合新闻分析宏观面对持仓的影响\n");
-        prompt.append("4. **仓位调整建议**（表格形式）：\n");
-        prompt.append("   | 标的 | 当前占比 | 建议占比 | 操作方向 | 核心理由 |\n");
-        prompt.append("   |------|---------|---------|---------|--------|\n");
-        prompt.append("   （每个持仓标的各一行）\n");
-        prompt.append("5. **买卖点参考**（表格形式）：\n");
-        prompt.append("   | 标的 | 当前价 | 关键支撑位 | 目标压力位 | 操作建议 |\n");
-        prompt.append("   |------|--------|-----------|-----------|--------|\n");
-        prompt.append("6. 输出格式使用 Markdown，分段清晰，语言专业但易懂\n");
-        prompt.append("7. 在报告最末尾（Markdown正文结束后），额外输出一个JSON代码块，格式严格如下（不要解释，直接输出）：\n");
-        prompt.append("```json\n");
-        prompt.append("{\"riskScore\":65,\"riskLevel\":\"中等\",\"positionRisk\":\"中\",\"concentrationRisk\":\"高\",\"marketRisk\":\"低\",\"topRisk\":\"集中度过高\"}\n");
-        prompt.append("```\n");
-        prompt.append("riskScore范围0~100（100为最高风险），riskLevel为极低/低/中等/高/极高，positionRisk/concentrationRisk/marketRisk为低/中/高。\n");
+    private int clampScore(int score) {
+        return Math.max(0, Math.min(5, score));
+    }
 
-        return prompt.toString();
+    private String buildReviewSummary(AdviceCandidate selected, ReviewResult review) {
+        StringBuilder md = new StringBuilder();
+        md.append("\n\n---\n\n## AI 建议质量评估\n\n");
+        md.append("- 最终采纳候选：候选 ").append(selected.code()).append("\n");
+        md.append("- 评审方式：候选建议已匿名处理，由 Gemini Flash 按统一评分表评审。\n\n");
+        md.append("| 候选 | 画像一致性 | 持仓针对性 | 市场情绪利用 | 新闻利用 | 目标约束 | 风险提示 | 可执行性 | 安全合规 | 总分 |\n");
+        md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+        for (CandidateScore s : review.scores()) {
+            md.append("| ").append(s.candidate())
+                    .append(" | ").append(s.profileConsistency())
+                    .append(" | ").append(s.holdingSpecificity())
+                    .append(" | ").append(s.marketSentimentUse())
+                    .append(" | ").append(s.newsUse())
+                    .append(" | ").append(s.goalConsistency())
+                    .append(" | ").append(s.riskWarning())
+                    .append(" | ").append(s.actionability())
+                    .append(" | ").append(s.safety())
+                    .append(" | ").append(s.computedTotal())
+                    .append(" |\n");
+        }
+        review.scores().stream()
+                .filter(s -> s.candidate().equalsIgnoreCase(selected.code()))
+                .findFirst()
+                .ifPresent(s -> md.append("\n评审摘要：").append(s.reason()).append("\n"));
+        return md.toString();
+    }
+
+    private String buildSingleCandidateNote(AdviceCandidate candidate) {
+        return "\n\n---\n\n## AI 建议质量评估\n\n"
+                + "- 当前仅成功生成 1 份候选建议，或未配置 Gemini 评审模型，系统采用 "
+                + candidate.provider() + " 的输出作为最终建议。\n";
+    }
+
+    private String buildReviewFailureNote(AdviceCandidate candidate, String reason) {
+        return "\n\n---\n\n## AI 建议质量评估\n\n"
+                + "- 多模型评审暂未完成，原因：" + reason + "\n"
+                + "- 系统采用候选 " + candidate.code() + " 作为本次最终建议。\n";
+    }
+
+    private String callOpenAiCompatibleApi(String url, String key, String model, String userPrompt,
+                                           String systemPrompt, double temperature, int maxTokens) throws Exception {
+        OkHttpClient client = httpClient.newBuilder()
+                .connectTimeout(deepSeekProps.getTimeout(), TimeUnit.SECONDS)
+                .readTimeout(deepSeekProps.getTimeout(), TimeUnit.SECONDS)
+                .writeTimeout(deepSeekProps.getTimeout(), TimeUnit.SECONDS)
+                .build();
+
+        ObjectNode requestBody = objectMapper.createObjectNode();
+        requestBody.put("model", model);
+        ArrayNode messages = objectMapper.createArrayNode();
+        ObjectNode systemMsg = objectMapper.createObjectNode();
+        systemMsg.put("role", "system");
+        systemMsg.put("content", systemPrompt);
+        messages.add(systemMsg);
+        ObjectNode userMsg = objectMapper.createObjectNode();
+        userMsg.put("role", "user");
+        userMsg.put("content", userPrompt);
+        messages.add(userMsg);
+        requestBody.set("messages", messages);
+        requestBody.put("temperature", temperature);
+        requestBody.put("max_tokens", maxTokens);
+
+        RequestBody body = RequestBody.create(
+                objectMapper.writeValueAsString(requestBody),
+                MediaType.get("application/json; charset=utf-8"));
+        Request request = new Request.Builder()
+                .url(url)
+                .addHeader("Authorization", "Bearer " + key)
+                .addHeader("Content-Type", "application/json")
+                .post(body)
+                .build();
+
+        try (Response response = client.newCall(request).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) {
+                throw new RuntimeException("LLM API error: HTTP " + response.code() + " " + responseBody);
+            }
+            JsonNode jsonNode = objectMapper.readTree(responseBody);
+            return jsonNode.path("choices").get(0).path("message").path("content").asText();
+        }
+    }
+
+    private String extractJson(String text) {
+        String trimmed = text == null ? "" : text.trim();
+        int firstBrace = trimmed.indexOf('{');
+        int lastBrace = trimmed.lastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+            return trimmed.substring(firstBrace, lastBrace + 1);
+        }
+        return trimmed;
+    }
+
+    private String limitText(String text, int maxLen) {
+        if (text == null) return "";
+        return text.length() <= maxLen ? text : text.substring(0, maxLen) + "...";
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
+    private record AdviceCandidate(String code, String provider, String content) {
+        AdviceCandidate withCode(String newCode) {
+            return new AdviceCandidate(newCode, provider, content);
+        }
+    }
+
+    private record CandidateScore(String candidate, int profileConsistency, int holdingSpecificity,
+                                  int marketSentimentUse, int newsUse, int goalConsistency,
+                                  int riskWarning, int actionability, int safety,
+                                  String reason) {
+        int computedTotal() {
+            return profileConsistency + holdingSpecificity + marketSentimentUse
+                    + newsUse + goalConsistency + riskWarning + actionability + safety;
+        }
+    }
+
+    private record ReviewResult(List<CandidateScore> scores) {
+        int totalScore(String candidate) {
+            return scores.stream()
+                    .filter(s -> s.candidate().equalsIgnoreCase(candidate))
+                    .findFirst()
+                    .map(CandidateScore::computedTotal)
+                    .orElse(0);
+        }
     }
 
     /**
@@ -355,29 +386,8 @@ public class AIService {
     public String generateNewsAnalysis(User user, String title, String summary, String source) {
         long start = System.currentTimeMillis();
         try {
-            List<Asset> assets = assetService.getUserAssets(user);
-            StringBuilder prompt = new StringBuilder();
-            prompt.append("你是一位专业的A股投资顾问。\n\n");
-
-            if (!assets.isEmpty()) {
-                prompt.append("【用户当前持仓】\n");
-                assets.forEach(a -> prompt.append(String.format("- %s（%s）持有 %s 股，买入价 %s 元，当前价 %s 元\n",
-                        a.getName(), a.getCode(), a.getAmount(), a.getPurchasePrice(), a.getCurrentPrice())));
-                prompt.append("\n");
-            }
-
-            prompt.append("【待分析新闻】\n");
-            prompt.append("标题：").append(title).append("\n");
-            if (summary != null && !summary.isBlank())
-                prompt.append("摘要：").append(summary).append("\n");
-            prompt.append("来源：").append(source).append("\n\n");
-
-            prompt.append("请用Markdown格式输出以下内容（简洁，总字数200字以内）：\n");
-            prompt.append("1. **性质判断**：利好 / 利空 / 中性，并说明核心理由（1句话）\n");
-            prompt.append("2. **受影响板块/个股**：哪些行业或具体股票受影响，重点标注用户持仓中的标的\n");
-            prompt.append("3. **短期操作建议**：针对用户持仓给出持有/观望/减仓/加仓的具体建议\n");
-
-            String result = callDeepSeekApi(prompt.toString());
+            String prompt = aiPromptService.buildNewsAnalysisPrompt(user, title, summary, source);
+            String result = callDeepSeekApi(prompt);
             saveRecord(user, "NEWS", title, result, System.currentTimeMillis() - start);
             return result;
         } catch (Exception e) {
@@ -398,31 +408,8 @@ public class AIService {
                 return "> 暂无关于「" + keyword + "」的新闻数据，请先抓取相关新闻。";
             }
 
-            List<Asset> assets = assetService.getUserAssets(user);
-            StringBuilder prompt = new StringBuilder();
-            prompt.append("你是一位专业的A股投资顾问。\n\n");
-
-            if (!assets.isEmpty()) {
-                prompt.append("【用户持仓（如与关键词相关请重点分析）】\n");
-                assets.forEach(a -> prompt.append(String.format("- %s（%s）\n", a.getName(), a.getCode())));
-                prompt.append("\n");
-            }
-
-            prompt.append("【关键词「").append(keyword).append("」相关新闻（共").append(newsList.size()).append("条）】\n");
-            newsList.stream().limit(15).forEach(n ->
-                    prompt.append(String.format("- 【%s】%s（%s）\n",
-                            n.getSource() != null ? n.getSource() : "财经",
-                            n.getTitle(),
-                            n.getFetchedAt() != null ? new java.text.SimpleDateFormat("MM-dd").format(n.getFetchedAt()) : "")));
-            prompt.append("\n");
-
-            prompt.append("请用Markdown格式输出以下内容：\n");
-            prompt.append("1. **整体情绪**：极度悲观/悲观/中性/乐观/极度乐观，给出0~100的情绪评分\n");
-            prompt.append("2. **核心信息提炼**：3~5条最重要的信息点\n");
-            prompt.append("3. **对用户持仓的影响**：哪些持仓受波及，程度如何\n");
-            prompt.append("4. **操作建议**：基于当前新闻情绪给出具体的近期操作策略\n");
-
-            String result = callDeepSeekApi(prompt.toString());
+            String prompt = aiPromptService.buildKeywordSentimentPrompt(user, keyword, newsList);
+            String result = callDeepSeekApi(prompt);
             saveRecord(user, "NEWS_KEYWORD", "关键词：" + keyword, result, System.currentTimeMillis() - start);
             return result;
         } catch (Exception e) {
@@ -439,75 +426,9 @@ public class AIService {
                                      java.math.BigDecimal monthlyGap) {
         long start = System.currentTimeMillis();
         try {
-            StringBuilder prompt = new StringBuilder();
-            prompt.append("你是一位个人财务顾问，请针对以下投资目标给出专业、个性化的分析。\n\n");
-
-            // ── 用户风险画像 ──
-            userProfileService.findByUser(user).ifPresent(profile -> {
-                prompt.append("【用户风险画像】\n");
-                prompt.append(String.format("- 年龄：%d 岁\n", profile.getAge()));
-                prompt.append(String.format("- 年收入：%s 元，月结余：%s 元\n",
-                        profile.getAnnualIncome(), profile.getMonthlySavings()));
-                prompt.append(String.format("- 投资经验：%s\n", profile.getInvestmentExperience()));
-                prompt.append(String.format("- 风险等级：%s（评分 %d/100）\n", profile.getRiskLevel(), profile.getRiskScore()));
-                prompt.append(String.format("- 最大可接受亏损：%d%%\n", profile.getMaxLossPercent()));
-                prompt.append(String.format("- 投资期限：%s，流动性需求：%s\n", profile.getInvestmentHorizon(), profile.getLiquidityNeed()));
-                prompt.append(String.format("- 偏好资产：%s\n\n", profile.getPreferredAssets()));
-            });
-
-            // ── 当前持仓 ──
-            java.util.List<Asset> assets = assetService.getUserAssets(user);
-            if (!assets.isEmpty()) {
-                prompt.append("【当前持仓】\n");
-                BigDecimal totalValue = assetService.calculateTotalAssetValue(user);
-                for (Asset a : assets) {
-                    BigDecimal pnl = a.getCurrentPrice().subtract(a.getPurchasePrice()).multiply(a.getAmount());
-                    prompt.append(String.format("- %s（%s）%s：%s 份，买入价 %s，当前价 %s，市值 %s，浮盈 %s\n",
-                            a.getName(), a.getCode(), a.getType(),
-                            a.getAmount(), a.getPurchasePrice(), a.getCurrentPrice(),
-                            a.getTotalValue(), pnl));
-                }
-                java.util.Map<String, BigDecimal> alloc = assetService.calculateAssetAllocation(user);
-                prompt.append(String.format("- 总资产：%s 元\n", totalValue));
-                prompt.append("- 仓位占比：");
-                alloc.forEach((k, v) -> prompt.append(String.format("%s %.1f%%  ", k, v)));
-                prompt.append("\n\n");
-            }
-
-            // ── 市场情绪 ──
-            try {
-                MarketSentimentService.MarketSentiment sentiment = marketSentimentService.getLatest();
-                if (sentiment != null && sentiment.score() >= 0) {
-                    prompt.append("【当前市场情绪】\n");
-                    prompt.append(String.format("- 情绪指数：%d/100（%s）\n", sentiment.score(), sentiment.level()));
-                    prompt.append(String.format("- 涨家数：%d，跌家数：%d，平家数：%d\n",
-                            sentiment.upCount(), sentiment.downCount(), sentiment.flatCount()));
-                    prompt.append(String.format("- 更新时间：%s\n\n", sentiment.updateTime()));
-                }
-            } catch (Exception ignored) {}
-
-            // ── 投资目标详情 ──
-            prompt.append("【投资目标】\n");
-            prompt.append(String.format("- 目标名称：%s\n", goal.getGoalName()));
-            prompt.append(String.format("- 目标金额：%s 元\n", goal.getTargetAmount()));
-            prompt.append(String.format("- 当前积累：%s 元（完成率 %s%%）\n", goal.getCurrentAmount(), completionRate));
-            prompt.append(String.format("- 目标日期：%s\n", goal.getTargetDate()));
-            prompt.append(String.format("- 目标风险等级：%s\n", goal.getRiskLevel()));
-            prompt.append(String.format("- 达成概率（线性估算）：%d%%\n", achieveProbability));
-            if (monthlyGap.compareTo(java.math.BigDecimal.ZERO) > 0)
-                prompt.append(String.format("- 月度缺口：还需额外投入 %s 元才能按时达成\n", monthlyGap));
-            else
-                prompt.append("- 月度缺口：当前投入速度已足够按时达成目标\n");
-            prompt.append("\n");
-
-            prompt.append("请用 Markdown 格式输出：\n");
-            prompt.append("1. **目标可行性评估**：结合用户风险画像和当前持仓，分析达成概率是否合理\n");
-            prompt.append("2. **缺口应对建议**：结合市场情绪和持仓结构，给出具体的资金调配建议\n");
-            prompt.append("3. **资产配置建议**：根据目标风险等级和用户实际持仓，推荐调整方向\n");
-            prompt.append("4. **风险提示**：结合当前市场情绪和用户风险承受能力的注意事项\n");
-            prompt.append("5. **行动建议**：接下来最重要的 2-3 个具体可执行行动\n");
-
-            String result = callDeepSeekApi(prompt.toString());
+            String prompt = aiPromptService.buildGoalAdvicePrompt(
+                    user, goal, completionRate, achieveProbability, monthlyGap);
+            String result = callDeepSeekApi(prompt);
             saveRecord(user, "GOAL", goal.getGoalName(), result, System.currentTimeMillis() - start);
             return result;
         } catch (Exception e) {
@@ -520,63 +441,17 @@ public class AIService {
      * 调用 DeepSeek Chat API
      */
     private String callDeepSeekApi(String userPrompt) throws Exception {
-        OkHttpClient client = new OkHttpClient.Builder()
-                .connectTimeout(deepSeekProps.getTimeout(), TimeUnit.SECONDS)
-                .readTimeout(deepSeekProps.getTimeout(), TimeUnit.SECONDS)
-                .writeTimeout(deepSeekProps.getTimeout(), TimeUnit.SECONDS)
-                .build();
-
-        // 构建请求体
-        ObjectNode requestBody = objectMapper.createObjectNode();
-        requestBody.put("model", deepSeekProps.getModel());
-
-        ArrayNode messages = objectMapper.createArrayNode();
-
-        // 系统角色：设定 AI 身份
-        ObjectNode systemMsg = objectMapper.createObjectNode();
-        systemMsg.put("role", "system");
-        systemMsg.put("content",
-                "你是一位专业的个人财务顾问，根据用户的风险画像、持仓情况和市场行情，" +
-                "提供符合其风险承受能力和投资目标的个性化建议。" +
-                "若推荐超出用户风险承受范围的标的，必须明确标注风险提示。" +
-                "请用中文回答，格式使用 Markdown，分析要有数据支撑，建议要具体可操作。");
-        messages.add(systemMsg);
-
-        // 用户消息：携带所有上下文数据
-        ObjectNode userMsg = objectMapper.createObjectNode();
-        userMsg.put("role", "user");
-        userMsg.put("content", userPrompt);
-        messages.add(userMsg);
-
-        requestBody.set("messages", messages);
-        requestBody.put("temperature", 0.7);
-        requestBody.put("max_tokens", 4000);
-
-        RequestBody body = RequestBody.create(
-                objectMapper.writeValueAsString(requestBody),
-                MediaType.get("application/json; charset=utf-8"));
-
-        Request request = new Request.Builder()
-                .url(deepSeekProps.getUrl())
-                .addHeader("Authorization", "Bearer " + deepSeekProps.getKey())
-                .addHeader("Content-Type", "application/json")
-                .post(body)
-                .build();
-
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                throw new RuntimeException("DeepSeek API 返回错误: HTTP " + response.code()
-                        + " " + (response.body() != null ? response.body().string() : ""));
-            }
-
-            String responseBody = response.body().string();
-            JsonNode jsonNode = objectMapper.readTree(responseBody);
-            return jsonNode
-                    .path("choices").get(0)
-                    .path("message")
-                    .path("content")
-                    .asText("AI 分析内容解析失败，请稍后重试。");
-        }
+        return callOpenAiCompatibleApi(
+                deepSeekProps.getUrl(),
+                deepSeekProps.getKey(),
+                deepSeekProps.getModel(),
+                userPrompt,
+                "你是一位专业的个人财务顾问，根据用户的风险画像、持仓情况和市场行情，"
+                        + "提供符合其风险承受能力和投资目标的个性化建议。"
+                        + "若推荐超出用户风险承受范围的标的，必须明确标注风险提示。"
+                        + "请用中文回答，格式使用 Markdown，分析要有数据支撑，建议要具体可操作。",
+                0.7,
+                4000);
     }
 
     /**

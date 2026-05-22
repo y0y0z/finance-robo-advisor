@@ -23,6 +23,22 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    /** AI 外部服务不可用 */
+    @ExceptionHandler(AiServiceUnavailableException.class)
+    public Object handleAiServiceUnavailable(AiServiceUnavailableException e,
+                                             HttpServletRequest request,
+                                             RedirectAttributes ra) {
+        log.warn("AI 服务不可用 [{} {}]: {}", request.getMethod(), request.getRequestURI(), e.getMessage());
+
+        if (isApiRequest(request)) {
+            return ResponseEntity
+                    .status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("error", e.getMessage()));
+        }
+        ra.addFlashAttribute("error", e.getMessage());
+        return new ModelAndView("redirect:" + referer(request));
+    }
+
     /** 业务规则异常（用户操作非法） */
     @ExceptionHandler(IllegalArgumentException.class)
     public Object handleIllegalArgument(IllegalArgumentException e,
