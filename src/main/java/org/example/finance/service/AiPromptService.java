@@ -292,8 +292,10 @@ public class AiPromptService {
         reviewPrompt.append("请不要根据篇幅、语言风格或猜测的模型来源评分，只根据内容是否正确利用用户数据评分。\n");
         reviewPrompt.append("评分维度均为 0-5 分：profileConsistency、holdingSpecificity、marketSentimentUse、newsUse、goalConsistency、riskWarning、actionability、safety。\n");
         reviewPrompt.append("其中 profileConsistency 不是看是否提到画像，而是判断建议是否符合风险等级、最大亏损承受能力、投资期限和流动性需求；其它维度也按是否正确利用数据评分。\n");
-        reviewPrompt.append("请输出严格 JSON，不要使用 Markdown 代码块。你只需要评分和说明理由，不需要选择最终候选，最终选择由系统按总分完成。格式如下：\n");
-        reviewPrompt.append("{\"scores\":[{\"candidate\":\"A\",\"profileConsistency\":4,\"holdingSpecificity\":4,\"marketSentimentUse\":3,\"newsUse\":3,\"goalConsistency\":4,\"riskWarning\":5,\"actionability\":4,\"safety\":5,\"reason\":\"...\"}]}\n\n");
+        reviewPrompt.append("必须为下面每一个候选都输出一条评分记录，candidate 字段必须原样使用候选编号。\n");
+        reviewPrompt.append("只输出一个 JSON 对象，不要输出 Markdown 代码块、解释文字或额外字段。JSON 格式必须严格如下：\n");
+        reviewPrompt.append("{\"scores\":[{\"candidate\":\"A\",\"profileConsistency\":4,\"holdingSpecificity\":4,\"marketSentimentUse\":3,\"newsUse\":3,\"goalConsistency\":4,\"riskWarning\":5,\"actionability\":4,\"safety\":5,\"reason\":\"...\"}]}\n");
+        reviewPrompt.append("如果只有候选 A/B/C，也只能使用 A/B/C，不要使用模型名、中文候选名或序号。\n\n");
         reviewPrompt.append("【原始上下文摘要】\n").append(limitText(originalPrompt, 2500)).append("\n\n");
         for (ReviewCandidateContext c : candidates) {
             reviewPrompt.append("【候选 ").append(c.code()).append("】\n")
@@ -310,7 +312,7 @@ public class AiPromptService {
     }
 
     public String buildReviewSystemPrompt() {
-        return "You are an impartial evaluator for robo-advisor reports. Return strict JSON only.";
+        return "You are an impartial evaluator for robo-advisor reports. Return only a JSON object with a scores array.";
     }
 
     public String buildDefaultAdviceSystemPrompt() {

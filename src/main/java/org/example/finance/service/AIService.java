@@ -66,19 +66,23 @@ public class AIService {
     @Value("${qwen.api.model:qwen-plus}")
     private String qwenModel;
 
+    @Value("${glm.api.key:}")
+    private String glmKey;
+    @Value("${glm.api.url:https://open.bigmodel.cn/api/paas/v4/chat/completions}")
+    private String glmUrl;
+    @Value("${glm.api.model:glm-4.7-flash}")
+    private String glmModel;
+    @Value("${glm.api.timeout:120}")
+    private int glmTimeout;
+
     @Value("${kimi.api.key:}")
     private String kimiKey;
     @Value("${kimi.api.url:https://api.moonshot.cn/v1/chat/completions}")
     private String kimiUrl;
-    @Value("${kimi.api.model:kimi-k2-0711-preview}")
+    @Value("${kimi.api.model:kimi-k2.6}")
     private String kimiModel;
-
-    @Value("${gemini.api.key:}")
-    private String geminiKey;
-    @Value("${gemini.api.url:https://generativelanguage.googleapis.com/v1beta/openai/chat/completions}")
-    private String geminiUrl;
-    @Value("${gemini.api.model:gemini-2.5-flash}")
-    private String geminiModel;
+    @Value("${kimi.api.timeout:180}")
+    private int kimiTimeout;
 
     /**
      * 保存 AI 分析记录到数据库，失败时仅打日志不影响主流程
@@ -113,8 +117,12 @@ public class AIService {
         } catch (AiServiceUnavailableException e) {
             throw e;
         } catch (Exception e) {
-            log.error("AI 分析调用失败: {}", e.getMessage());
-            return buildFallbackAdvice(user);
+            log.error("AI 分析调用失败", e);
+            try {
+                return buildFallbackAdvice(user);
+            } catch (Exception fallbackError) {
+                throw new AiServiceUnavailableException("AI 调用失败，且本地降级报告生成失败：" + fallbackError.getMessage(), fallbackError);
+            }
         }
     }
 
@@ -143,21 +151,21 @@ public class AIService {
 
     private String generateReviewedPortfolioAdvice(String prompt) throws Exception {
         List<CompletableFuture<AdviceCandidate>> tasks = List.of(
-                generateCandidateAsync("DeepSeek", deepSeekProps.getUrl(), deepSeekProps.getKey(), deepSeekProps.getModel(), prompt),
-                generateCandidateAsync("Qwen", qwenUrl, qwenKey, qwenModel, prompt),
-                generateCandidateAsync("Kimi", kimiUrl, kimiKey, kimiModel, prompt)
+                generateCandidateAsync("DeepSeek", deepSeekProps.getUrl(), deepSeekProps.getKey(), deepSeekProps.getModel(), deepSeekProps.getTimeout(), prompt),
+                generateCandidateAsync("Kimi", kimiUrl, kimiKey, kimiModel, kimiTimeout, prompt),
+                generateCandidateAsync("GLM", glmUrl, glmKey, glmModel, glmTimeout, prompt)
         );
         CompletableFuture.allOf(tasks.toArray(new CompletableFuture[0])).join();
 
-        List<AdviceCandidate> candidates = tasks.stream()
+        List<AdviceCandidate> candidates = new ArrayList<>(tasks.stream()
                 .map(CompletableFuture::join)
                 .filter(c -> c != null && !isBlank(c.content()))
-                .toList();
+                .toList());
 
         if (candidates.isEmpty()) {
             throw new AiServiceUnavailableException("当前没有可用的 AI 候选模型，请检查 API Key 配置或稍后重试");
         }
-        if (candidates.size() == 1 || isBlank(geminiKey)) {
+        if (candidates.size() == 1 || isBlank(qwenKey)) {
             AdviceCandidate only = candidates.get(0);
             return only.content() + buildSingleCandidateNote(only);
         }
@@ -171,7 +179,7 @@ public class AIService {
         try {
             review = reviewCandidates(prompt, candidates);
         } catch (Exception e) {
-            log.warn("Gemini review failed, use first candidate: {}", e.getMessage());
+            log.warn("Qwen review failed, use first candidate: {}", e.getMessage());
             AdviceCandidate first = candidates.stream()
                     .filter(c -> "DeepSeek".equals(c.provider()))
                     .findFirst()
@@ -187,19 +195,22 @@ public class AIService {
     }
 
     private CompletableFuture<AdviceCandidate> generateCandidateAsync(String provider, String url, String key,
-                                                                      String model, String prompt) {
-        return CompletableFuture.supplyAsync(() -> generateCandidate(provider, url, key, model, prompt));
+                                                                      String model, int timeoutSeconds, String prompt) {
+        return CompletableFuture.supplyAsync(() -> generateCandidate(provider, url, key, model, timeoutSeconds, prompt));
     }
 
-    private AdviceCandidate generateCandidate(String provider, String url, String key, String model, String prompt) {
+    private AdviceCandidate generateCandidate(String provider, String url, String key, String model, int timeoutSeconds, String prompt) {
         if (isBlank(key) || isBlank(url) || isBlank(model)) {
             log.info("Skip {} candidate because API config is incomplete", provider);
             return null;
         }
         try {
+            boolean kimiProvider = "Kimi".equals(provider);
+            double temperature = kimiProvider ? 1.0 : 0.7;
+            int maxTokens = kimiProvider ? 2500 : 4000;
             String content = callOpenAiCompatibleApi(url, key, model, prompt,
                     aiPromptService.buildPortfolioCandidateSystemPrompt(),
-                    0.7, 4000);
+                    temperature, maxTokens, timeoutSeconds);
             return new AdviceCandidate("", provider, content);
         } catch (Exception e) {
             log.warn("{} candidate generation failed: {}", provider, e.getMessage());
@@ -214,36 +225,68 @@ public class AIService {
                         .map(c -> new AiPromptService.ReviewCandidateContext(c.code(), c.content()))
                         .toList());
 
-        String json = callOpenAiCompatibleApi(geminiUrl, geminiKey, geminiModel, reviewPrompt,
+        String json = callOpenAiCompatibleApi(qwenUrl, qwenKey, qwenModel, reviewPrompt,
                 aiPromptService.buildReviewSystemPrompt(),
-                0.2, 2000);
+                0.2, 2000, deepSeekProps.getTimeout());
         return parseReviewResult(json);
     }
 
     private ReviewResult parseReviewResult(String raw) throws Exception {
         JsonNode root = objectMapper.readTree(extractJson(raw));
         List<CandidateScore> scores = new ArrayList<>();
-        JsonNode scoreNodes = root.path("scores");
+        JsonNode scoreNodes = findScoreNodes(root);
         if (scoreNodes.isArray()) {
             for (JsonNode n : scoreNodes) {
+                String candidate = firstText(n, "candidate", "候选", "id", "name");
+                if (isBlank(candidate)) continue;
                 scores.add(new CandidateScore(
-                        n.path("candidate").asText(""),
-                        clampScore(n.path("profileConsistency").asInt(0)),
-                        clampScore(n.path("holdingSpecificity").asInt(0)),
-                        clampScore(n.path("marketSentimentUse").asInt(0)),
-                        clampScore(n.path("newsUse").asInt(0)),
-                        clampScore(n.path("goalConsistency").asInt(0)),
-                        clampScore(n.path("riskWarning").asInt(0)),
-                        clampScore(n.path("actionability").asInt(0)),
-                        clampScore(n.path("safety").asInt(0)),
-                        n.path("reason").asText("")
+                        candidate.trim(),
+                        scoreValue(n, "profileConsistency", "画像一致性"),
+                        scoreValue(n, "holdingSpecificity", "持仓针对性"),
+                        scoreValue(n, "marketSentimentUse", "市场情绪利用"),
+                        scoreValue(n, "newsUse", "新闻利用"),
+                        scoreValue(n, "goalConsistency", "目标约束"),
+                        scoreValue(n, "riskWarning", "风险提示"),
+                        scoreValue(n, "actionability", "可执行性"),
+                        scoreValue(n, "safety", "安全合规"),
+                        firstText(n, "reason", "理由", "评审摘要", "comment")
                 ));
             }
         }
         if (scores.isEmpty()) {
+            log.warn("Qwen review returned no usable scores: {}", limitText(raw, 1000));
             throw new IllegalArgumentException("review scores are empty");
         }
         return new ReviewResult(scores);
+    }
+
+    private JsonNode findScoreNodes(JsonNode root) {
+        if (root.isArray()) return root;
+        JsonNode scores = root.path("scores");
+        if (scores.isArray()) return scores;
+        JsonNode resultScores = root.path("result").path("scores");
+        if (resultScores.isArray()) return resultScores;
+        JsonNode dataScores = root.path("data").path("scores");
+        if (dataScores.isArray()) return dataScores;
+        JsonNode candidates = root.path("candidates");
+        if (candidates.isArray()) return candidates;
+        return objectMapper.createArrayNode();
+    }
+
+    private int scoreValue(JsonNode node, String englishKey, String chineseKey) {
+        JsonNode value = node.path(englishKey);
+        if (value.isMissingNode()) value = node.path(chineseKey);
+        return clampScore(value.asInt(0));
+    }
+
+    private String firstText(JsonNode node, String... keys) {
+        for (String key : keys) {
+            JsonNode value = node.path(key);
+            if (!value.isMissingNode() && !value.isNull() && !value.asText("").isBlank()) {
+                return value.asText();
+            }
+        }
+        return "";
     }
 
     private int clampScore(int score) {
@@ -254,7 +297,7 @@ public class AIService {
         StringBuilder md = new StringBuilder();
         md.append("\n\n---\n\n## AI 建议质量评估\n\n");
         md.append("- 最终采纳候选：候选 ").append(selected.code()).append("\n");
-        md.append("- 评审方式：候选建议已匿名处理，由 Gemini Flash 按统一评分表评审。\n\n");
+        md.append("- 评审方式：候选建议已匿名处理，由 Qwen 按统一评分表评审。\n\n");
         md.append("| 候选 | 画像一致性 | 持仓针对性 | 市场情绪利用 | 新闻利用 | 目标约束 | 风险提示 | 可执行性 | 安全合规 | 总分 |\n");
         md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
         for (CandidateScore s : review.scores()) {
@@ -279,7 +322,7 @@ public class AIService {
 
     private String buildSingleCandidateNote(AdviceCandidate candidate) {
         return "\n\n---\n\n## AI 建议质量评估\n\n"
-                + "- 当前仅成功生成 1 份候选建议，或未配置 Gemini 评审模型，系统采用 "
+                + "- 当前仅成功生成 1 份候选建议，或未配置 Qwen 评审模型，系统采用 "
                 + candidate.provider() + " 的输出作为最终建议。\n";
     }
 
@@ -291,10 +334,17 @@ public class AIService {
 
     private String callOpenAiCompatibleApi(String url, String key, String model, String userPrompt,
                                            String systemPrompt, double temperature, int maxTokens) throws Exception {
+        return callOpenAiCompatibleApi(url, key, model, userPrompt, systemPrompt, temperature, maxTokens,
+                deepSeekProps.getTimeout());
+    }
+
+    private String callOpenAiCompatibleApi(String url, String key, String model, String userPrompt,
+                                           String systemPrompt, double temperature, int maxTokens,
+                                           int timeoutSeconds) throws Exception {
         OkHttpClient client = httpClient.newBuilder()
-                .connectTimeout(deepSeekProps.getTimeout(), TimeUnit.SECONDS)
-                .readTimeout(deepSeekProps.getTimeout(), TimeUnit.SECONDS)
-                .writeTimeout(deepSeekProps.getTimeout(), TimeUnit.SECONDS)
+                .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .build();
 
         ObjectNode requestBody = objectMapper.createObjectNode();
@@ -336,8 +386,14 @@ public class AIService {
         String trimmed = text == null ? "" : text.trim();
         int firstBrace = trimmed.indexOf('{');
         int lastBrace = trimmed.lastIndexOf('}');
-        if (firstBrace >= 0 && lastBrace > firstBrace) {
+        int firstBracket = trimmed.indexOf('[');
+        int lastBracket = trimmed.lastIndexOf(']');
+        if (firstBrace >= 0 && lastBrace > firstBrace
+                && (firstBracket < 0 || firstBrace < firstBracket)) {
             return trimmed.substring(firstBrace, lastBrace + 1);
+        }
+        if (firstBracket >= 0 && lastBracket > firstBracket) {
+            return trimmed.substring(firstBracket, lastBracket + 1);
         }
         return trimmed;
     }
