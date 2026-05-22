@@ -302,6 +302,24 @@ public class AiPromptService {
         return reviewPrompt.toString();
     }
 
+    public String buildPortfolioCandidateSystemPrompt() {
+        return "You are a professional personal robo-advisor. Answer in Chinese Markdown. "
+                + "Use the provided profile, holdings, warnings, news, sentiment and goals. "
+                + "Do not mention your model name or provider name. "
+                + "Do not promise returns or give absolute buy/sell orders.";
+    }
+
+    public String buildReviewSystemPrompt() {
+        return "You are an impartial evaluator for robo-advisor reports. Return strict JSON only.";
+    }
+
+    public String buildDefaultAdviceSystemPrompt() {
+        return "你是一位专业的个人财务顾问，根据用户的风险画像、持仓情况和市场行情，"
+                + "提供符合其风险承受能力和投资目标的个性化建议。"
+                + "若推荐超出用户风险承受范围的标的，必须明确标注风险提示。"
+                + "请用中文回答，格式使用 Markdown，分析要有数据支撑，建议要具体可操作。";
+    }
+
     private void appendHoldings(StringBuilder prompt, List<Asset> assets) {
         if (assets.isEmpty()) return;
         prompt.append("【用户当前持仓】\n");

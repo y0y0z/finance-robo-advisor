@@ -28,9 +28,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * AI 投资分析服务
- * 将用户持仓、股票行情、新闻、预警状态整合成结构化 Prompt，
- * 调用 DeepSeek API 生成个性化投资建议。
+ * AI 投资分析编排服务。
+ *
+ * Prompt 构建由 AiPromptService 负责；本服务负责模型调用、多模型候选生成、
+ * 匿名评审、评分解析、最终结果选择和分析记录保存。
  */
 @Service
 public class AIService {
@@ -197,10 +198,7 @@ public class AIService {
         }
         try {
             String content = callOpenAiCompatibleApi(url, key, model, prompt,
-                    "You are a professional personal robo-advisor. Answer in Chinese Markdown. "
-                            + "Use the provided profile, holdings, warnings, news, sentiment and goals. "
-                            + "Do not mention your model name or provider name. "
-                            + "Do not promise returns or give absolute buy/sell orders.",
+                    aiPromptService.buildPortfolioCandidateSystemPrompt(),
                     0.7, 4000);
             return new AdviceCandidate("", provider, content);
         } catch (Exception e) {
@@ -217,7 +215,7 @@ public class AIService {
                         .toList());
 
         String json = callOpenAiCompatibleApi(geminiUrl, geminiKey, geminiModel, reviewPrompt,
-                "You are an impartial evaluator for robo-advisor reports. Return strict JSON only.",
+                aiPromptService.buildReviewSystemPrompt(),
                 0.2, 2000);
         return parseReviewResult(json);
     }
@@ -446,10 +444,7 @@ public class AIService {
                 deepSeekProps.getKey(),
                 deepSeekProps.getModel(),
                 userPrompt,
-                "你是一位专业的个人财务顾问，根据用户的风险画像、持仓情况和市场行情，"
-                        + "提供符合其风险承受能力和投资目标的个性化建议。"
-                        + "若推荐超出用户风险承受范围的标的，必须明确标注风险提示。"
-                        + "请用中文回答，格式使用 Markdown，分析要有数据支撑，建议要具体可操作。",
+                aiPromptService.buildDefaultAdviceSystemPrompt(),
                 0.7,
                 4000);
     }
