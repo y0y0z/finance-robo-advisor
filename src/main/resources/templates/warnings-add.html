@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>添加预警 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar {
+            background-color: #343a40; color: white;
+            height: 100vh; position: fixed;
+            top: 0; left: 0; width: 210px; padding-top: 20px;
+        }
+        .sidebar a { color: white; padding: 10px 15px; display: block; text-decoration: none; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar a.active { background-color: #0d6efd; }
+        .content { margin-left: 210px; padding: 30px; }
+        .optional-badge {
+            font-size: 0.72rem; color: #6c757d;
+            border: 1px solid #dee2e6; border-radius: 4px;
+            padding: 1px 5px; margin-left: 6px; vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h5 class="text-center mb-4">资产管理助手</h5>
+    <a href="/dashboard">仪表盘</a>
+    <a href="/assets">资产配置</a>
+    <a href="/stocks">股票/基金</a>
+    <a href="/warnings" class="active">预警管理</a>
+    <a href="/news">财经新闻</a>
+    <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+    <a href="/logout">退出登录</a>
+</div>
+
+<div class="content">
+    <div class="d-flex align-items-center mb-4 gap-2">
+        <a href="/warnings" class="btn btn-sm btn-outline-secondary">← 返回</a>
+        <h4 class="mb-0">添加价格预警</h4>
+    </div>
+
+    <div class="card shadow-sm" style="max-width:520px;">
+        <div class="card-body p-4">
+            <form th:action="@{/warnings/add}" method="post" id="addForm">
+
+                <div class="mb-3">
+                    <label for="code" class="form-label fw-semibold">股票/基金代码</label>
+                    <input type="text" class="form-control" id="code" name="code"
+                           placeholder="如：600519、000001" maxlength="8"
+                           autocomplete="off" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="name" class="form-label fw-semibold">名称</label>
+                    <input type="text" class="form-control" id="name" name="name"
+                           placeholder="自动填充或手动输入" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="type" class="form-label fw-semibold">类型</label>
+                    <select class="form-select" id="type" name="type" required>
+                        <option value="股票">股票</option>
+                        <option value="基金">基金</option>
+                    </select>
+                </div>
+
+                <hr class="my-3">
+                <p class="text-muted small mb-3">以下三项价格线均为可选，<strong>至少填写一项</strong>，未填的条件不触发预警。</p>
+
+                <!-- 预警线 -->
+                <div class="mb-3">
+                    <label for="warningPoint" class="form-label fw-semibold">
+                        预警价格线 <span class="optional-badge">可选</span>
+                    </label>
+                    <input type="number" step="0.001" class="form-control" id="warningPoint"
+                           name="warningPoint" placeholder="价格跌至此价触发（如补仓点位）">
+                    <div class="form-text">价格 ≤ 该值时触发</div>
+                </div>
+
+                <!-- 止盈线 -->
+                <div class="mb-3">
+                    <label for="stopProfitPoint" class="form-label fw-semibold">
+                        止盈价格线 <span class="optional-badge">可选</span>
+                    </label>
+                    <input type="number" step="0.001" class="form-control" id="stopProfitPoint"
+                           name="stopProfitPoint" placeholder="价格涨至此价触发止盈提醒">
+                    <div class="form-text">价格 ≥ 该值时触发</div>
+                </div>
+
+                <!-- 止损线 -->
+                <div class="mb-3">
+                    <label for="stopLossPoint" class="form-label fw-semibold">
+                        止损价格线 <span class="optional-badge">可选</span>
+                    </label>
+                    <input type="number" step="0.001" class="form-control" id="stopLossPoint"
+                           name="stopLossPoint" placeholder="价格跌至此价触发止损提醒">
+                    <div class="form-text">价格 ≤ 该值时触发（优先级高于预警线）</div>
+                </div>
+
+                <!-- 备注 -->
+                <div class="mb-4">
+                    <label for="meaning" class="form-label fw-semibold">备注说明</label>
+                    <input type="text" class="form-control" id="meaning" name="meaning"
+                           placeholder="如：补仓价、目标价、成本线" required>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-primary" id="submitBtn">保存预警</button>
+                    <a href="/warnings" class="btn btn-outline-secondary">取消</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const warningInput = document.getElementById('warningPoint');
+    const profitInput  = document.getElementById('stopProfitPoint');
+    const lossInput    = document.getElementById('stopLossPoint');
+
+    // 至少一个价格线
+    document.getElementById('addForm').addEventListener('submit', e => {
+        if (!warningInput.value && !profitInput.value && !lossInput.value) {
+            e.preventDefault();
+            alert('请至少填写一项价格线（预警价、止盈价或止损价）');
+        }
+    });
+</script>
+</body>
+</html>

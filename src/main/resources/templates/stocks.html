@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股票/基金 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar {
+            background-color: #343a40; color: white;
+            height: 100vh; position: fixed;
+            top: 0; left: 0; width: 210px; padding-top: 20px;
+        }
+        .sidebar a { color: white; padding: 10px 15px; display: block; text-decoration: none; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar a.active { background-color: #0d6efd; }
+        .content { margin-left: 210px; padding: 24px; }
+
+        /* A股涨红跌绿 */
+        .up   { color: #dc3545; font-weight: 600; }
+        .down { color: #198754; font-weight: 600; }
+        .flat { color: #6c757d; }
+
+        .price-cell { font-size: 1.05rem; font-weight: bold; }
+        .update-time { font-size: 0.75rem; color: #adb5bd; }
+        .refresh-hint { font-size: 0.8rem; color: #6c757d; margin-bottom: 12px; }
+        .dot-live {
+            display: inline-block; width: 8px; height: 8px;
+            border-radius: 50%; background: #28a745;
+            margin-right: 4px; animation: blink 1.5s infinite;
+        }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+        .th-hint { font-size: 0.7rem; font-weight: normal; color: #adb5bd; display: block; }
+
+        /* AI 分析弹窗样式 */
+        #ai-modal-body h1 { font-size: 1.3rem; border-bottom: 2px solid #0d6efd; padding-bottom: 6px; margin-bottom: 14px; }
+        #ai-modal-body h2 { font-size: 1.1rem; color: #0d6efd; margin-top: 18px; margin-bottom: 10px; }
+        #ai-modal-body ul  { padding-left: 1.4rem; }
+        #ai-modal-body li  { margin-bottom: 5px; line-height: 1.7; }
+        #ai-modal-body p   { line-height: 1.8; }
+        #ai-modal-body blockquote {
+            border-left: 4px solid #ffc107; background: #fff8e1;
+            padding: 8px 14px; margin: 10px 0; border-radius: 4px;
+        }
+        .spinner-sm-ring {
+            width: 32px; height: 32px;
+            border: 4px solid #e0e0e0; border-top-color: #0d6efd;
+            border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h5 class="text-center mb-4">资产管理助手</h5>
+    <a href="/dashboard">仪表盘</a>
+    <a href="/assets">资产配置</a>
+    <a href="/dca">定投计划</a>
+    <a href="/goals">投资目标</a>
+    <a href="/stocks" class="active">股票/基金</a>
+    <a href="/warnings">预警管理</a>
+    <a href="/news">财经新闻</a>
+    <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+    <a href="/logout">退出登录</a>
+</div>
+
+<div class="content">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4>我的关注列表</h4>
+        <a href="/stocks/add" class="btn btn-primary">+ 添加关注</a>
+    </div>
+
+    <div th:if="${param.duplicate}" class="alert alert-warning alert-dismissible fade show">
+        该股票/基金代码已在您的关注列表中，无需重复添加。
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+
+    <p class="refresh-hint">
+        <span class="dot-live"></span>
+        价格每 5 分钟自动更新；「今日涨跌」对比昨收，「持有涨跌」对比加入关注时价格
+    </p>
+
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0" th:if="${!stocks.empty}">
+                <thead class="table-dark">
+                    <tr>
+                        <th>类型</th>
+                        <th>名称 / 代码</th>
+                        <th>当前价（元）</th>
+                        <th>今日涨跌额<span class="th-hint">较昨日</span></th>
+                        <th>今日涨跌幅<span class="th-hint">较昨日</span></th>
+                        <th>持有涨跌额<span class="th-hint">较关注时</span></th>
+                        <th>持有涨跌幅<span class="th-hint">较关注时</span></th>
+                        <th>市场</th>
+                        <th>市盈率</th>
+                        <th>市净率</th>
+                        <th>净值</th>
+                        <th>最后更新</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!--/*  vo 是 StockVO，所有计算已在 Controller 完成，模板只做展示  */-->
+                    <tr th:each="vo : ${stocks}">
+                        <td>
+                            <span class="badge"
+                                  th:classappend="${vo.stock.type == '基金'} ? 'bg-info text-dark' : 'bg-secondary'"
+                                  th:text="${vo.stock.type}"></span>
+                        </td>
+                        <td>
+                            <strong th:text="${vo.stock.name}"></strong><br>
+                            <small class="text-muted" th:text="${vo.stock.code}"></small>
+                        </td>
+
+                        <!-- 当前价格 -->
+                        <td class="price-cell"
+                            th:classappend="${vo.dailyDir}"
+                            th:text="${vo.priceDisplay}">
+                        </td>
+
+                        <!-- 今日涨跌额 -->
+                        <td th:classappend="${vo.dailyDir}" th:text="${vo.dailyChange}"></td>
+
+                        <!-- 今日涨跌幅 -->
+                        <td th:classappend="${vo.dailyDir}" th:text="${vo.dailyChangePct}"></td>
+
+                        <!-- 持有涨跌额 -->
+                        <td th:classappend="${vo.holdDir}" th:text="${vo.holdChange}"></td>
+
+                        <!-- 持有涨跌幅 -->
+                        <td th:classappend="${vo.holdDir}" th:text="${vo.holdChangePct}"></td>
+
+                        <td th:text="${vo.stock.market}"></td>
+                        <td th:text="${vo.stock.pe != null ? vo.stock.pe : '-'}"></td>
+                        <td th:text="${vo.stock.pb != null ? vo.stock.pb : '-'}"></td>
+                        <td th:text="${vo.stock.nav != null ? vo.stock.nav : '-'}"></td>
+                        <td class="update-time"
+                            th:text="${vo.stock.updateTime != null
+                                ? #dates.format(vo.stock.updateTime, 'HH:mm:ss') : '-'}">
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-success mb-1 btn-ai"
+                                    th:attr="data-code=${vo.stock.code}, data-name=${vo.stock.name}">
+                                🤖 AI分析
+                            </button><br>
+                            <a th:href="@{/stocks/edit/{id}(id=${vo.stock.id})}"
+                               class="btn btn-sm btn-outline-primary">编辑</a>
+                            <a th:href="@{/stocks/delete/{id}(id=${vo.stock.id})}"
+                               class="btn btn-sm btn-outline-danger"
+                               onclick="return confirm('确定移除该关注吗？')">移除</a>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div th:if="${stocks.empty}" class="text-center py-5">
+                <p class="text-muted">您还没有关注任何股票或基金</p>
+                <a href="/stocks/add" class="btn btn-primary">立即添加关注</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- AI 分析弹窗 -->
+<div class="modal fade" id="aiModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">🤖 AI 投资分析 — <span id="ai-stock-name"></span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="ai-loading" class="text-center py-4">
+                    <div class="spinner-sm-ring"></div>
+                    <p class="text-muted small">DeepSeek AI 正在综合分析相关新闻与市场数据...</p>
+                </div>
+                <div id="ai-modal-body" style="display:none;"></div>
+                <div id="ai-error" class="alert alert-warning" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <small id="ai-gen-time" class="text-muted me-auto"></small>
+                <button type="button" class="btn btn-outline-primary btn-sm"
+                        onclick="retryAiAnalysis()">🔄 重新分析</button>
+                <button type="button" class="btn btn-secondary btn-sm"
+                        data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 预警弹窗 -->
+<div class="modal fade" id="warningAlertModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-danger">
+            <div class="modal-header bg-danger text-white py-2">
+                <h6 class="modal-title mb-0">🔔 预警触发通知</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0" id="warning-popup-list"></div>
+            <div class="modal-footer py-2">
+                <a href="/warnings" class="btn btn-danger btn-sm">前往处理预警</a>
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">知道了</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // ===== AI 专项分析 =====
+    let currentAiCode = '', currentAiName = '';
+
+    function openAiAnalysis(code, name) {
+        currentAiCode = code;
+        currentAiName = name;
+        document.getElementById('ai-stock-name').textContent = name + '（' + code + '）';
+        document.getElementById('ai-loading').style.display = 'block';
+        document.getElementById('ai-modal-body').style.display = 'none';
+        document.getElementById('ai-error').style.display = 'none';
+        document.getElementById('ai-gen-time').textContent = '';
+        new bootstrap.Modal(document.getElementById('aiModal')).show();
+        loadStockAi(code, name);
+    }
+
+    function retryAiAnalysis() {
+        document.getElementById('ai-loading').style.display = 'block';
+        document.getElementById('ai-modal-body').style.display = 'none';
+        document.getElementById('ai-error').style.display = 'none';
+        loadStockAi(currentAiCode, currentAiName);
+    }
+
+    function loadStockAi(code, name) {
+        const start = Date.now();
+        fetch('/api/ai-advice/stock?code=' + encodeURIComponent(code) + '&name=' + encodeURIComponent(name))
+            .then(r => { if (!r.ok) throw new Error('服务器返回 ' + r.status); return r.text(); })
+            .then(md => {
+                document.getElementById('ai-modal-body').innerHTML = marked.parse(md);
+                document.getElementById('ai-loading').style.display = 'none';
+                document.getElementById('ai-modal-body').style.display = 'block';
+                document.getElementById('ai-gen-time').textContent =
+                    '生成耗时 ' + ((Date.now() - start) / 1000).toFixed(1) + 's';
+            })
+            .catch(e => {
+                document.getElementById('ai-loading').style.display = 'none';
+                document.getElementById('ai-error').textContent = '分析失败：' + e.message;
+                document.getElementById('ai-error').style.display = 'block';
+            });
+    }
+
+    // ===== 预警实时弹窗（30 秒轮询）=====
+    let warnModal = null;
+
+    function pollWarnings() {
+        fetch('/api/warnings/pending')
+            .then(r => r.ok ? r.json() : [])
+            .then(list => { if (list && list.length > 0) showWarnPopup(list); })
+            .catch(() => {});
+    }
+
+    function showWarnPopup(list) {
+        const container = document.getElementById('warning-popup-list');
+        container.innerHTML = '';
+        list.forEach(n => {
+            const color = n.status === 'LOSS' ? 'danger' : n.status === 'PROFIT' ? 'success' : 'warning';
+            const div = document.createElement('div');
+            div.className = 'p-3 border-bottom';
+            div.innerHTML = `
+                <div class="d-flex justify-content-between">
+                    <span><strong>${n.name}（${n.code}）</strong>
+                    <span class="badge bg-${color} ms-1">${n.label}</span></span>
+                    <span class="fw-bold text-danger">${n.price} 元</span>
+                </div>
+                ${n.meaning ? '<small class="text-muted">' + n.meaning + '</small>' : ''}`;
+            container.appendChild(div);
+        });
+        if (!warnModal) warnModal = new bootstrap.Modal(document.getElementById('warningAlertModal'));
+        warnModal.show();
+    }
+
+    pollWarnings();
+    setInterval(pollWarnings, 30000);
+
+    // ===== AI 按钮事件委托（data-code / data-name 方式）=====
+    document.addEventListener('click', function(e) {
+        const btn = e.target.closest('.btn-ai');
+        if (btn) {
+            openAiAnalysis(btn.dataset.code, btn.dataset.name);
+        }
+    });
+</script>
+</body>
+</html>

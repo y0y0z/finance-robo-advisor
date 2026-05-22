@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>交易记录 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar { background-color: #343a40; color: white; min-height: 100vh; }
+        .sidebar a { color: white; text-decoration: none; display: block; padding: 10px 15px; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar .active { background-color: #007bff; }
+        .content { padding: 24px; }
+
+        .direction-BUY  { color: #dc3545; font-weight: 700; }  /* 买入红色（A股惯例） */
+        .direction-SELL { color: #198754; font-weight: 700; }  /* 卖出绿色 */
+
+        .stat-card { border-radius: 10px; padding: 16px 20px; }
+        .pnl-pos { color: #dc3545; }
+        .pnl-neg { color: #198754; }
+
+        .empty-state { text-align: center; padding: 60px 0; color: #9ca3af; }
+    </style>
+</head>
+<body>
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-2 sidebar">
+            <h5 class="p-3">资产管理助手</h5>
+            <a href="/dashboard">仪表盘</a>
+            <a href="/assets" class="active">资产配置</a>
+            <a href="/dca">定投计划</a>
+    <a href="/goals">投资目标</a>
+            <a href="/stocks">股票/基金</a>
+            <a href="/warnings">预警管理</a>
+            <a href="/news">财经新闻</a>
+            <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+            <a href="/logout">退出登录</a>
+        </div>
+
+        <div class="col-md-10 content">
+
+            <!-- 顶部导航 -->
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <a href="/assets" class="text-decoration-none text-secondary me-2">← 返回资产列表</a>
+                    <h4 class="d-inline">
+                        <span th:text="${asset.name}"></span>
+                        <small class="text-muted fs-6" th:text="'（' + ${asset.code} + '）'"></small>
+                        交易记录
+                    </h4>
+                </div>
+                <div class="d-flex gap-2">
+                    <a th:href="@{/assets/{id}/buy(id=${asset.id})}"
+                       class="btn btn-danger btn-sm">📈 买入</a>
+                    <a th:href="@{/assets/{id}/sell(id=${asset.id})}"
+                       class="btn btn-success btn-sm">📉 卖出</a>
+                </div>
+            </div>
+
+            <!-- 提示消息 -->
+            <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+                <span th:text="${success}"></span>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+                <span th:text="${error}"></span>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+
+            <!-- 持仓概览卡片 -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="stat-card bg-white shadow-sm">
+                        <div class="text-muted small">当前持仓</div>
+                        <div class="fs-4 fw-bold" th:text="${asset.amount} + ' 股'"></div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card bg-white shadow-sm">
+                        <div class="text-muted small">加权成本均价</div>
+                        <div class="fs-4 fw-bold" th:text="'¥ ' + ${asset.purchasePrice}"></div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card bg-white shadow-sm">
+                        <div class="text-muted small">当前市价</div>
+                        <div class="fs-4 fw-bold" th:text="'¥ ' + ${asset.currentPrice}"></div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card bg-white shadow-sm">
+                        <div class="text-muted small">历史已实现盈亏</div>
+                        <div class="fs-4 fw-bold"
+                             th:classappend="${realizedPnl >= 0} ? 'pnl-pos' : 'pnl-neg'"
+                             th:text="(${realizedPnl >= 0} ? '+' : '') + ${realizedPnl} + ' 元'">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 交易记录表格 -->
+            <div class="card shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <strong>📋 交易流水</strong>
+                    <span class="text-muted small" th:text="'共 ' + ${trades.size()} + ' 笔'"></span>
+                </div>
+                <div class="card-body p-0">
+
+                    <!-- 空状态 -->
+                    <div th:if="${trades.empty}" class="empty-state">
+                        <div style="font-size:2.5rem">📭</div>
+                        <p class="mt-2">暂无交易记录</p>
+                        <a th:href="@{/assets/{id}/buy(id=${asset.id})}"
+                           class="btn btn-danger btn-sm">立即记录第一笔买入</a>
+                    </div>
+
+                    <table th:if="${!trades.empty}" class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>日期</th>
+                                <th>方向</th>
+                                <th>数量（股）</th>
+                                <th>成交价（元）</th>
+                                <th>交易金额（元）</th>
+                                <th>手续费（元）</th>
+                                <th>备注</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="t : ${trades}">
+                                <td th:text="${#dates.format(t.tradeDate, 'yyyy-MM-dd')}"></td>
+                                <td>
+                                    <span th:classappend="'direction-' + ${t.direction}"
+                                          th:text="${t.direction == 'BUY'} ? '买入 ▲' : '卖出 ▼'">
+                                    </span>
+                                </td>
+                                <td th:text="${t.quantity}"></td>
+                                <td th:text="${t.price}"></td>
+                                <td th:text="${t.amount}"></td>
+                                <td th:text="${t.fee}"></td>
+                                <td class="text-muted small" th:text="${t.remark != null ? t.remark : '—'}"></td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-secondary"
+                                            onclick="openEdit(this)"
+                                            th:data-id="${t.id}"
+                                            th:data-date="${#dates.format(t.tradeDate,'yyyy-MM-dd')}"
+                                            th:data-remark="${t.remark != null ? t.remark : ''}">编辑</button>
+                                    <a th:href="@{/assets/trades/{tid}/delete(tid=${t.id})}"
+                                       class="btn btn-sm btn-outline-danger"
+                                       onclick="return confirm('删除后将回滚持仓数量，确定删除？')">删除</a>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- 编辑交易记录 Modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">编辑交易记录</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="editForm" method="post">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">交易日期</label>
+                        <input type="date" name="tradeDate" class="form-control" required id="editDate">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">备注</label>
+                        <input type="text" name="remark" class="form-control" maxlength="200" id="editRemark">
+                    </div>
+                    <small class="text-muted">注：仅可修改日期和备注，数量/价格不可修改以保证均价准确性</small>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    let editModal;
+    function openEdit(btn) {
+        const id = btn.getAttribute('data-id');
+        const date = btn.getAttribute('data-date');
+        const remark = btn.getAttribute('data-remark');
+
+        document.getElementById('editDate').value = date;
+        document.getElementById('editRemark').value = remark;
+        document.getElementById('editForm').action = '/assets/trades/' + id + '/edit';
+
+        if (!editModal) editModal = new bootstrap.Modal(document.getElementById('editModal'));
+        editModal.show();
+    }
+</script>
+</body>
+</html>

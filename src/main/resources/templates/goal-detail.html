@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title th:text="${goal.goalName} + ' - 目标详情'"></title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body { background-color: #f8f9fa; }
+        .sidebar { background-color: #343a40; color: white; height: 100vh; position: fixed; top: 0; left: 0; width: 210px; padding-top: 20px; }
+        .sidebar a { color: white; padding: 10px 15px; display: block; text-decoration: none; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar a.active { background-color: #0d6efd; }
+        .content { margin-left: 210px; padding: 24px; }
+        .stat-box { text-align: center; padding: 16px; background: white; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.08); }
+        .stat-num { font-size: 2rem; font-weight: 700; line-height: 1; }
+        .progress { height: 12px; }
+        #ai-result { display: none; }
+        #ai-result .markdown-body { font-size: 14px; line-height: 1.7; }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h5 class="text-center mb-4">资产管理助手</h5>
+    <a href="/dashboard">仪表盘</a>
+    <a href="/assets">资产配置</a>
+    <a href="/dca">定投计划</a>
+    <a href="/goals" class="active">投资目标</a>
+    <a href="/stocks">股票/基金</a>
+    <a href="/warnings">预警管理</a>
+    <a href="/news">财经新闻</a>
+    <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+    <a href="/logout">退出登录</a>
+</div>
+
+<div class="content">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <a href="/goals" class="text-muted small">← 返回目标列表</a>
+            <h4 class="mb-0 mt-1" th:text="${goal.goalName}"></h4>
+        </div>
+        <div class="d-flex gap-2">
+            <a th:href="@{/goals/{id}/edit(id=${goal.id})}" class="btn btn-sm btn-outline-primary">编辑</a>
+            <span class="badge fs-6 px-3 py-2"
+              th:classappend="${goal.riskLevel == 'CONSERVATIVE'} ? 'bg-primary' : (${goal.riskLevel == 'BALANCED'} ? 'bg-warning text-dark' : 'bg-danger')"
+              th:text="${goal.riskLevel == 'CONSERVATIVE'} ? '保守型' : (${goal.riskLevel == 'BALANCED'} ? '稳健型' : '激进型')"></span>
+        </div>
+    </div>
+
+    <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
+
+    <!-- 三个核心指标 -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="stat-box">
+                <div class="stat-num text-primary" th:text="${completionRate} + '%'"></div>
+                <div class="text-muted small mt-1">目标完成率</div>
+                <div class="progress mt-2">
+                    <div class="progress-bar bg-primary" th:style="'width:' + ${completionRate} + '%'"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-box">
+                <div class="stat-num"
+                     th:classappend="${achieveProbability >= 70} ? 'text-success' : (${achieveProbability >= 40} ? 'text-warning' : 'text-danger')"
+                     th:text="${achieveProbability} + '%'"></div>
+                <div class="text-muted small mt-1">按时达成概率</div>
+                <div class="progress mt-2">
+                    <div class="progress-bar"
+                         th:classappend="${achieveProbability >= 70} ? 'bg-success' : (${achieveProbability >= 40} ? 'bg-warning' : 'bg-danger')"
+                         th:style="'width:' + ${achieveProbability} + '%'"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-box">
+                <div class="stat-num"
+                     th:classappend="${monthlyGap.compareTo(T(java.math.BigDecimal).ZERO) == 0} ? 'text-success' : 'text-danger'"
+                     th:with="isShort=${daysLeft < 30}"
+                     th:text="${monthlyGap.compareTo(T(java.math.BigDecimal).ZERO) == 0} ? '已达标' : (${#numbers.formatDecimal(monthlyGap, 1, 2)} + (${isShort} ? ' 元' : ' 元/月'))"></div>
+                <div class="text-muted small mt-1" th:with="isShort=${daysLeft < 30}" th:text="${isShort} ? '资金缺口' : '月度缺口'"></div>
+                <div class="text-muted" style="font-size:11px; margin-top:6px"
+                     th:with="isShort=${daysLeft < 30}"
+                     th:text="${monthlyGap.compareTo(T(java.math.BigDecimal).ZERO) == 0} ? '当前投入速度足够' : (${isShort} ? ('仅剩' + ${daysLeft} + '天，建议尽快补齐') : '需额外增加月投入')"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 目标基本信息 -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <div class="row g-2 text-muted small">
+                <div class="col-md-3">目标金额：<strong class="text-dark" th:text="${goal.targetAmount} + ' 元'"></strong></div>
+                <div class="col-md-3">当前积累：<strong class="text-dark" th:text="${goal.currentAmount} + ' 元'"></strong></div>
+                <div class="col-md-3">目标日期：<strong class="text-dark" th:text="${goal.targetDate}"></strong></div>
+                <div class="col-md-3">优先级：<strong class="text-dark" th:text="'P' + ${goal.priority}"></strong></div>
+            </div>
+            <div th:if="${goal.notes}" class="mt-2 text-muted small">备注：<span th:text="${goal.notes}"></span></div>
+        </div>
+    </div>
+
+    <!-- 关联定投计划 -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <strong>关联定投计划</strong>
+        </div>
+        <div class="card-body">
+            <div th:if="${linkedPlans.empty}" class="text-muted small mb-3">暂无关联的定投计划</div>
+            <table th:if="${!linkedPlans.empty}" class="table table-sm mb-3">
+                <thead class="table-light">
+                    <tr><th>计划名称</th><th>代码</th><th>每期金额</th><th>频率</th><th>状态</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                    <tr th:each="p : ${linkedPlans}">
+                        <td th:text="${p.name}"></td>
+                        <td th:text="${p.code}"></td>
+                        <td th:text="${p.amount} + ' 元'"></td>
+                        <td th:text="${p.frequency}"></td>
+                        <td><span class="badge" th:classappend="${p.status == 'ACTIVE'} ? 'bg-success' : 'bg-secondary'" th:text="${p.status}"></span></td>
+                        <td>
+                            <form th:action="@{/goals/{id}/unlink-plan(id=${goal.id})}" method="post" style="display:inline">
+                                <input type="hidden" name="planId" th:value="${p.id}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">解除</button>
+                            </form>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <!-- 关联新计划 -->
+            <div th:if="${!allPlans.empty}">
+                <form th:action="@{/goals/{id}/link-plan(id=${goal.id})}" method="post" class="d-flex gap-2">
+                    <select name="planId" class="form-select form-select-sm" style="max-width:300px">
+                        <option th:each="p : ${allPlans}"
+                                th:value="${p.id}"
+                                th:text="${p.name} + '（' + ${p.code} + '，' + ${p.amount} + '元/' + ${p.frequency} + '）'"></option>
+                    </select>
+                    <button type="submit" class="btn btn-sm btn-outline-primary">关联</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI 分析 -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+            <strong>AI 目标分析</strong>
+            <button id="ai-btn" class="btn btn-sm btn-light" onclick="loadAI()">获取 AI 分析</button>
+        </div>
+        <div class="card-body">
+            <div id="ai-loading" style="display:none" class="text-center py-3 text-muted">AI 分析中，请稍候...</div>
+            <div id="ai-result"><div class="markdown-body" id="ai-content"></div></div>
+        </div>
+    </div>
+</div>
+
+<script th:inline="javascript">
+    const goalId = /*[[${goal.id}]]*/ 0;
+    function loadAI() {
+        document.getElementById('ai-btn').disabled = true;
+        document.getElementById('ai-loading').style.display = 'block';
+        fetch('/goals/api/' + goalId + '/ai-analysis')
+            .then(r => r.text())
+            .then(md => {
+                document.getElementById('ai-loading').style.display = 'none';
+                document.getElementById('ai-result').style.display = 'block';
+                document.getElementById('ai-content').innerHTML = marked.parse(md);
+            })
+            .catch(() => {
+                document.getElementById('ai-loading').style.display = 'none';
+                document.getElementById('ai-result').style.display = 'block';
+                document.getElementById('ai-content').textContent = 'AI 分析失败，请重试';
+            });
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>编辑定投计划 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar {
+            background-color: #343a40; color: white;
+            height: 100vh; position: fixed;
+            top: 0; left: 0; width: 210px; padding-top: 20px;
+        }
+        .sidebar a { color: white; padding: 10px 15px; display: block; text-decoration: none; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar a.active { background-color: #0d6efd; }
+        .content { margin-left: 210px; padding: 30px; }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h5 class="text-center mb-4">资产管理助手</h5>
+    <a href="/dashboard">仪表盘</a>
+    <a href="/assets">资产配置</a>
+    <a href="/dca" class="active">定投计划</a>
+    <a href="/stocks">股票/基金</a>
+    <a href="/warnings">预警管理</a>
+    <a href="/news">财经新闻</a>
+    <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+    <a href="/logout">退出登录</a>
+</div>
+
+<div class="content">
+    <div class="d-flex align-items-center mb-4 gap-2">
+        <a href="/dca" class="btn btn-sm btn-outline-secondary">← 返回</a>
+        <h4 class="mb-0">编辑定投计划</h4>
+    </div>
+
+    <div class="card shadow-sm" style="max-width:520px;">
+        <div class="card-body p-4">
+            <form th:action="@{/dca/{id}/edit(id=${plan.id})}" method="post">
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">基金/股票代码</label>
+                    <input type="text" class="form-control" th:value="${plan.code}" disabled>
+                    <div class="form-text text-muted">代码不可修改，如需更换请删除后重建计划</div>
+                </div>
+
+                <div class="mb-3">
+                    <label for="name" class="form-label fw-semibold">名称</label>
+                    <input type="text" class="form-control" id="name" name="name"
+                           th:value="${plan.name}" required>
+                </div>
+
+                <hr class="my-3">
+
+                <div class="mb-3">
+                    <label for="amount" class="form-label fw-semibold">每期定投金额（元）</label>
+                    <input type="number" step="0.01" min="1" class="form-control" id="amount"
+                           name="amount" th:value="${plan.amount}" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="frequency" class="form-label fw-semibold">定投频率</label>
+                    <select class="form-select" id="frequency" name="frequency" required
+                            onchange="onFreqChange()">
+                        <option value="MONTHLY"  th:selected="${plan.frequency == 'MONTHLY'}">每月</option>
+                        <option value="BIWEEKLY" th:selected="${plan.frequency == 'BIWEEKLY'}">每两周</option>
+                        <option value="WEEKLY"   th:selected="${plan.frequency == 'WEEKLY'}">每周</option>
+                        <option value="DAILY"    th:selected="${plan.frequency == 'DAILY'}">每日</option>
+                    </select>
+                </div>
+
+                <!-- 每月几号（仅MONTHLY显示） -->
+                <div class="mb-3" id="domRow">
+                    <label for="dayOfMonth" class="form-label fw-semibold">每月几号执行</label>
+                    <input type="number" min="1" max="28" class="form-control" id="dayOfMonth"
+                           name="dayOfMonth" th:value="${plan.dayOfMonth}" placeholder="1-28">
+                    <div class="form-text">建议选 1、5、10、15、20 等固定日期</div>
+                </div>
+
+                <div class="mb-4">
+                    <label for="notes" class="form-label fw-semibold">备注
+                        <span style="font-size:.72rem;color:#6c757d;border:1px solid #dee2e6;border-radius:4px;padding:1px 5px;margin-left:4px;">可选</span>
+                    </label>
+                    <input type="text" class="form-control" id="notes" name="notes"
+                           th:value="${plan.notes}" placeholder="如：定投纳斯达克100，长期持有">
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-primary">保存修改</button>
+                    <a href="/dca" class="btn btn-outline-secondary">取消</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script th:inline="javascript">
+    function onFreqChange() {
+        const freq = document.getElementById('frequency').value;
+        document.getElementById('domRow').style.display = freq === 'MONTHLY' ? '' : 'none';
+    }
+    // 初始化
+    onFreqChange();
+</script>
+</body>
+</html>

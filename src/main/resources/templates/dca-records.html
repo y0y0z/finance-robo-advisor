@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>定投历史 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar {
+            background-color: #343a40; color: white;
+            height: 100vh; position: fixed;
+            top: 0; left: 0; width: 210px; padding-top: 20px;
+        }
+        .sidebar a { color: white; padding: 10px 15px; display: block; text-decoration: none; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar a.active { background-color: #0d6efd; }
+        .content { margin-left: 210px; padding: 24px; }
+        .profit  { color: #198754; }
+        .loss    { color: #dc3545; }
+        .neutral { color: #6c757d; }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h5 class="text-center mb-4">资产管理助手</h5>
+    <a href="/dashboard">仪表盘</a>
+    <a href="/assets">资产配置</a>
+    <a href="/dca" class="active">定投计划</a>
+    <a href="/stocks">股票/基金</a>
+    <a href="/warnings">预警管理</a>
+    <a href="/news">财经新闻</a>
+    <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+    <a href="/logout">退出登录</a>
+</div>
+
+<div class="content">
+    <div class="d-flex align-items-center mb-3 gap-2">
+        <a href="/dca" class="btn btn-sm btn-outline-secondary">← 返回</a>
+        <h4 class="mb-0">
+            <span th:text="${plan.name}"></span>
+            <small class="text-muted fs-6 ms-1" th:text="'(' + ${plan.code} + ')'"></small>
+            定投历史
+        </h4>
+    </div>
+
+    <!-- 投入统计 -->
+    <div class="row g-3 mb-3">
+        <div class="col-md-3">
+            <div class="card text-center border-0 shadow-sm">
+                <div class="card-body py-3">
+                    <div class="fs-5 fw-bold" th:text="${totalPeriods} + ' 期'"></div>
+                    <small class="text-muted">累计定投期数</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center border-0 shadow-sm">
+                <div class="card-body py-3">
+                    <div class="fs-5 fw-bold" th:text="${totalInvested} + ' 元'"></div>
+                    <small class="text-muted">累计投入金额</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center border-0 shadow-sm">
+                <div class="card-body py-3">
+                    <div class="fs-5 fw-bold" th:text="${totalShares} + ' 份'"></div>
+                    <small class="text-muted">累计买入份额</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center border-0 shadow-sm">
+                <div class="card-body py-3">
+                    <div class="fs-5 fw-bold"
+                         th:text="${avgCost.compareTo(T(java.math.BigDecimal).ZERO) == 0} ? '--' : ${avgCost} + ' 元/份'"></div>
+                    <small class="text-muted">加权平均成本</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 收益统计 -->
+    <div class="card shadow-sm mb-4 border-0"
+         th:classappend="${profitLoss != null and profitLoss.compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? 'border-start border-success border-3' : 'border-start border-danger border-3'">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="fw-bold">📈 收益分析</span>
+                <small class="text-muted" th:if="${navDate != null}">
+                    净值日期：<span th:text="${navDate}"></span>
+                </small>
+                <small class="text-muted" th:if="${navDate == null}">净值获取失败</small>
+            </div>
+            <div class="row g-3 text-center">
+                <div class="col-md-3">
+                    <div class="small text-muted mb-1">当前净值</div>
+                    <div class="fs-5 fw-bold"
+                         th:text="${currentNav != null ? currentNav + ' 元' : '--'}"></div>
+                </div>
+                <div class="col-md-3">
+                    <div class="small text-muted mb-1">当前市值</div>
+                    <div class="fs-5 fw-bold"
+                         th:text="${currentValue != null ? currentValue + ' 元' : '--'}"></div>
+                </div>
+                <div class="col-md-3">
+                    <div class="small text-muted mb-1">累计盈亏</div>
+                    <div class="fs-5 fw-bold"
+                         th:if="${profitLoss != null}"
+                         th:classappend="${profitLoss.compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? 'profit' : 'loss'"
+                         th:text="${profitLoss.compareTo(T(java.math.BigDecimal).ZERO) >= 0 ? '+' : ''} + ${profitLoss} + ' 元'"></div>
+                    <div class="fs-5 fw-bold neutral" th:if="${profitLoss == null}">--</div>
+                </div>
+                <div class="col-md-3">
+                    <div class="small text-muted mb-1">收益率</div>
+                    <div class="fs-5 fw-bold"
+                         th:if="${returnRate != null}"
+                         th:classappend="${returnRate.compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? 'profit' : 'loss'"
+                         th:text="${returnRate.compareTo(T(java.math.BigDecimal).ZERO) >= 0 ? '+' : ''} + ${returnRate} + '%'"></div>
+                    <div class="fs-5 fw-bold neutral" th:if="${returnRate == null}">--</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 执行记录表 -->
+    <div class="card shadow-sm">
+        <div class="card-header fw-bold py-2">执行记录明细</div>
+        <div class="card-body p-0">
+            <div th:if="${records.empty}" class="text-center py-4 text-muted">
+                暂无执行记录
+            </div>
+            <table th:if="${!records.empty}" class="table table-sm table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>执行日期</th>
+                        <th>投入（元）</th>
+                        <th>净值（元）</th>
+                        <th>份额</th>
+                        <th>本批市值</th>
+                        <th>本批盈亏</th>
+                        <th>方式</th>
+                        <th>备注</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="r : ${records}"
+                        th:with="batchValue=${currentNav != null ? r.shares.multiply(currentNav).setScale(2, T(java.math.RoundingMode).HALF_UP) : null},
+                                 batchPL=${batchValue != null ? batchValue.subtract(r.amount).setScale(2, T(java.math.RoundingMode).HALF_UP) : null}">
+                        <td th:text="${r.executeDate}"></td>
+                        <td th:text="${r.amount}"></td>
+                        <td th:text="${r.price}"></td>
+                        <td th:text="${r.shares}"></td>
+                        <!-- 本批当前市值 -->
+                        <td th:text="${batchValue != null ? batchValue : '--'}"></td>
+                        <!-- 本批盈亏 -->
+                        <td th:if="${batchPL != null}"
+                            th:classappend="${batchPL.compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? 'profit' : 'loss'"
+                            th:text="${batchPL.compareTo(T(java.math.BigDecimal).ZERO) >= 0 ? '+' : ''} + ${batchPL}"></td>
+                        <td th:if="${batchPL == null}" class="neutral">--</td>
+                        <!-- 方式 -->
+                        <td>
+                            <span th:if="${r.auto}"
+                                  class="badge bg-primary" style="font-size:.7rem;">自动</span>
+                            <span th:if="${!r.auto}"
+                                  class="badge bg-secondary" style="font-size:.7rem;">手动</span>
+                        </td>
+                        <td th:text="${r.notes != null ? r.notes : '--'}"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

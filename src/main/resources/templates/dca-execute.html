@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>记录定投 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar {
+            background-color: #343a40; color: white;
+            height: 100vh; position: fixed;
+            top: 0; left: 0; width: 210px; padding-top: 20px;
+        }
+        .sidebar a { color: white; padding: 10px 15px; display: block; text-decoration: none; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar a.active { background-color: #0d6efd; }
+        .content { margin-left: 210px; padding: 30px; }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h5 class="text-center mb-4">资产管理助手</h5>
+    <a href="/dashboard">仪表盘</a>
+    <a href="/assets">资产配置</a>
+    <a href="/dca" class="active">定投计划</a>
+    <a href="/stocks">股票/基金</a>
+    <a href="/warnings">预警管理</a>
+    <a href="/news">财经新闻</a>
+    <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+    <a href="/logout">退出登录</a>
+</div>
+
+<div class="content">
+    <div class="d-flex align-items-center mb-4 gap-2">
+        <a href="/dca" class="btn btn-sm btn-outline-secondary">← 返回</a>
+        <h4 class="mb-0">记录本期定投</h4>
+    </div>
+
+    <!-- 计划信息摘要 -->
+    <div class="alert alert-info py-2 mb-4" style="max-width:520px;">
+        <strong th:text="${plan.name}"></strong>
+        <span class="text-muted ms-1" th:text="'(' + ${plan.code} + ')'"></span>
+        &nbsp;·&nbsp;
+        <span th:text="${plan.frequency == 'MONTHLY'} ? '每月' + (plan.dayOfMonth != null ? plan.dayOfMonth + '号' : '') :
+                        (plan.frequency == 'BIWEEKLY' ? '每两周' : '每周')"></span>
+        定投目标：<strong th:text="${plan.amount} + ' 元'"></strong>
+    </div>
+
+    <div class="card shadow-sm" style="max-width:520px;">
+        <div class="card-body p-4">
+            <form th:action="@{/dca/{id}/execute(id=${plan.id})}" method="post">
+
+                <div class="mb-3">
+                    <label for="actualAmount" class="form-label fw-semibold">本次实际投入金额（元）</label>
+                    <input type="number" step="0.01" min="0.01" class="form-control" id="actualAmount"
+                           name="actualAmount" th:value="${plan.amount}" required>
+                    <div class="form-text">默认为计划金额，可按实际调整</div>
+                </div>
+
+                <div class="mb-3">
+                    <label for="nav" class="form-label fw-semibold">购买净值 / 成交价格（元/份）</label>
+                    <input type="number" step="0.0001" min="0.0001" class="form-control" id="nav"
+                           name="nav" placeholder="填写当日净值或成交价" required>
+                    <div class="form-text" id="sharesHint">填写净值后自动估算份额</div>
+                </div>
+
+                <div class="mb-3">
+                    <label for="executeDate" class="form-label fw-semibold">执行日期</label>
+                    <input type="date" class="form-control" id="executeDate"
+                           name="executeDate" th:value="${today}" required>
+                </div>
+
+                <div class="mb-4">
+                    <label for="notes" class="form-label fw-semibold">备注
+                        <span style="font-size:.72rem;color:#6c757d;border:1px solid #dee2e6;border-radius:4px;padding:1px 5px;margin-left:4px;">可选</span>
+                    </label>
+                    <input type="text" class="form-control" id="notes" name="notes"
+                           placeholder="如：正常定投、加仓等">
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-primary">确认记录</button>
+                    <a href="/dca" class="btn btn-outline-secondary">取消</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const amtInput = document.getElementById('actualAmount');
+    const navInput = document.getElementById('nav');
+    const hint     = document.getElementById('sharesHint');
+
+    function updateHint() {
+        const amt = parseFloat(amtInput.value);
+        const nav = parseFloat(navInput.value);
+        if (amt > 0 && nav > 0) {
+            const shares = Math.floor(amt / nav * 100) / 100;
+            hint.textContent = '预计买入份额：' + shares.toFixed(2) + ' 份';
+            hint.className = 'form-text text-success fw-semibold';
+        } else {
+            hint.textContent = '填写净值后自动估算份额';
+            hint.className = 'form-text';
+        }
+    }
+
+    amtInput.addEventListener('input', updateHint);
+    navInput.addEventListener('input', updateHint);
+</script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>投资目标 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { background-color: #f8f9fa; }
+        .sidebar { background-color: #343a40; color: white; height: 100vh; position: fixed; top: 0; left: 0; width: 210px; padding-top: 20px; }
+        .sidebar a { color: white; padding: 10px 15px; display: block; text-decoration: none; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar a.active { background-color: #0d6efd; }
+        .content { margin-left: 210px; padding: 24px; }
+        .progress { height: 10px; }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h5 class="text-center mb-4">资产管理助手</h5>
+    <a href="/dashboard">仪表盘</a>
+    <a href="/assets">资产配置</a>
+    <a href="/dca">定投计划</a>
+    <a href="/goals" class="active">投资目标</a>
+    <a href="/stocks">股票/基金</a>
+    <a href="/warnings">预警管理</a>
+    <a href="/news">财经新闻</a>
+    <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+    <a href="/logout">退出登录</a>
+</div>
+
+<div class="content">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h4 class="mb-0">投资目标</h4>
+        <a href="/goals/add" class="btn btn-primary btn-sm">+ 新建目标</a>
+    </div>
+
+    <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
+
+    <div th:if="${goals.empty}" class="text-center py-5 text-muted">
+        <p>还没有投资目标，点击右上角新建一个吧</p>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-md-6" th:each="g : ${goals}">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h6 class="mb-0 fw-bold" th:text="${g.goalName}"></h6>
+                        <span class="badge"
+                              th:classappend="${g.riskLevel == 'CONSERVATIVE'} ? 'bg-primary' : (${g.riskLevel == 'BALANCED'} ? 'bg-warning text-dark' : 'bg-danger')"
+                              th:text="${g.riskLevel == 'CONSERVATIVE'} ? '保守' : (${g.riskLevel == 'BALANCED'} ? '稳健' : '激进')"></span>
+                    </div>
+                    <div class="text-muted small mb-2">
+                        目标：<strong th:text="${g.targetAmount} + ' 元'"></strong>
+                        &nbsp;|&nbsp;截止：<span th:text="${g.targetDate}"></span>
+                    </div>
+                    <!-- 完成率进度条（Thymeleaf 调用 goalService 方法） -->
+                    <div th:with="rate=${goalService.completionRate(g)}">
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span>已积累 <span th:text="${g.currentAmount} + ' 元'"></span></span>
+                            <span th:text="${rate} + '%'"></span>
+                        </div>
+                        <div class="progress mb-2">
+                            <div class="progress-bar"
+                                 th:classappend="${rate.doubleValue() >= 80} ? 'bg-success' : (${rate.doubleValue() >= 40} ? 'bg-warning' : 'bg-danger')"
+                                 th:style="'width:' + ${rate} + '%'"></div>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2 mt-2">
+                        <a th:href="@{/goals/{id}(id=${g.id})}" class="btn btn-sm btn-outline-primary">详情 / AI分析</a>
+                        <a th:href="@{/goals/{id}/delete(id=${g.id})}" class="btn btn-sm btn-outline-danger"
+                           onclick="return confirm('确定删除？')">删除</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

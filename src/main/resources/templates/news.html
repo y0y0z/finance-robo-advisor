@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>财经新闻 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar {
+            background-color: #343a40; color: white;
+            height: 100vh; position: fixed;
+            top: 0; left: 0; width: 210px; padding-top: 20px;
+        }
+        .sidebar a { color: white; padding: 10px 15px; display: block; text-decoration: none; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar a.active { background-color: #0d6efd; }
+        .content { margin-left: 210px; padding: 24px; }
+
+        .keyword-badge {
+            cursor: pointer; font-size: 0.85rem;
+            transition: background 0.15s;
+        }
+        .keyword-badge:hover { opacity: 0.85; }
+        .keyword-badge.active-kw { outline: 2px solid #0d6efd; outline-offset: 2px; }
+
+        .news-card {
+            border-left: 4px solid #dee2e6;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+            background: white;
+            border-radius: 0 6px 6px 0;
+            transition: border-color 0.2s;
+        }
+        .news-card:hover { border-left-color: #0d6efd; }
+        .news-card h6 { margin-bottom: 4px; }
+        .news-card h6 a { color: #212529; text-decoration: none; }
+        .news-card h6 a:hover { color: #0d6efd; }
+        .news-meta { font-size: 0.75rem; color: #adb5bd; }
+        .kw-tag {
+            font-size: 0.7rem; padding: 1px 6px;
+            background: #e7f3ff; color: #0d6efd;
+            border-radius: 10px; margin-left: 6px;
+        }
+        .empty-hint { text-align: center; padding: 40px; color: #adb5bd; }
+
+        /* AI 弹窗样式 */
+        #ai-modal-body h1 { font-size: 1.2rem; border-bottom: 2px solid #0d6efd; padding-bottom: 6px; }
+        #ai-modal-body h2 { font-size: 1rem; color: #0d6efd; margin-top: 14px; }
+        #ai-modal-body ul  { padding-left: 1.4rem; }
+        #ai-modal-body li  { margin-bottom: 4px; line-height: 1.7; }
+        #ai-modal-body p   { line-height: 1.8; }
+        .spinner-sm-ring {
+            width: 28px; height: 28px;
+            border: 4px solid #e0e0e0; border-top-color: #0d6efd;
+            border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 10px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h5 class="text-center mb-4">资产管理助手</h5>
+    <a href="/dashboard">仪表盘</a>
+    <a href="/assets">资产配置</a>
+    <a href="/dca">定投计划</a>
+    <a href="/goals">投资目标</a>
+    <a href="/stocks">股票/基金</a>
+    <a href="/warnings">预警管理</a>
+    <a href="/news" class="active">财经新闻</a>
+    <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+    <a href="/logout">退出登录</a>
+</div>
+
+<div class="content">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4>📰 财经新闻</h4>
+        <small class="text-muted">每 30 分钟自动按关键词抓取最新资讯</small>
+    </div>
+
+    <div th:if="${success}" class="alert alert-success alert-dismissible fade show py-2">
+        <span th:text="${success}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    <div th:if="${error}" class="alert alert-warning alert-dismissible fade show py-2">
+        <span th:text="${error}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+
+    <div class="row g-3">
+        <!-- 左侧：关键词管理 -->
+        <div class="col-md-3">
+            <div class="card shadow-sm">
+                <div class="card-header fw-bold py-2">🔍 我的关键词</div>
+                <div class="card-body p-2">
+
+                    <form action="/news/keywords/add" method="post" class="mb-3">
+                        <div class="input-group input-group-sm">
+                            <input type="text" name="keyword" class="form-control"
+                                   placeholder="如：比亚迪、新能源" maxlength="20" required>
+                            <button class="btn btn-primary" type="submit">添加</button>
+                        </div>
+                    </form>
+
+                    <div th:if="${keywords.empty}" class="text-center text-muted small py-3">
+                        暂无关键词，请先添加
+                    </div>
+
+                    <div th:each="kw : ${keywords}" class="mb-2">
+                        <div class="d-flex align-items-center">
+                            <!-- 点击过滤新闻 -->
+                            <a th:href="@{/news(keyword=${kw.keyword})}"
+                               class="badge bg-primary keyword-badge flex-grow-1 text-start py-2 px-3"
+                               th:classappend="${activeKeyword == kw.keyword} ? ' active-kw' : ''"
+                               th:text="${kw.keyword}">
+                            </a>
+                            <!-- 立即抓取 -->
+                            <a th:href="@{/news/keywords/fetch/{id}(id=${kw.id})}"
+                               class="btn btn-sm btn-outline-secondary ms-1" title="立即抓取">↻</a>
+                            <!-- 删除 -->
+                            <a th:href="@{/news/keywords/delete/{id}(id=${kw.id})}"
+                               class="btn btn-sm btn-outline-danger ms-1"
+                               onclick="return confirm('确定删除该关键词吗？')" title="删除">×</a>
+                        </div>
+                        <!-- AI 情绪汇总按钮 -->
+                        <button class="btn btn-xs btn-outline-purple btn-kw-sentiment mt-1 w-100"
+                                style="font-size:0.72rem; color:#6f42c1; border-color:#6f42c1;"
+                                th:attr="data-keyword=${kw.keyword}">
+                            📊 AI情绪分析
+                        </button>
+                    </div>
+
+                    <div th:if="${activeKeyword != null}" class="mt-3 pt-2 border-top">
+                        <a href="/news" class="btn btn-sm btn-outline-secondary w-100">← 查看全部新闻</a>
+                    </div>
+
+                    <div class="mt-3 pt-2 border-top">
+                        <p class="text-muted small mb-1">💡 使用说明：</p>
+                        <ul class="text-muted small ps-3 mb-0">
+                            <li>添加关键词后立即触发抓取</li>
+                            <li>之后每 30 分钟自动更新</li>
+                            <li>点击关键词筛选相关新闻</li>
+                            <li>点击「📊」获取AI情绪汇总</li>
+                            <li>点击「🤖 AI解读」分析单条新闻</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：新闻列表 -->
+        <div class="col-md-9">
+            <div class="card shadow-sm">
+                <div class="card-header d-flex justify-content-between align-items-center py-2">
+                    <span class="fw-bold">
+                        <span th:if="${activeKeyword != null}">
+                            🔍 「<span th:text="${activeKeyword}"></span>」相关新闻
+                        </span>
+                        <span th:if="${activeKeyword == null}">最新财经资讯</span>
+                    </span>
+                    <span class="badge bg-secondary" th:text="${news.size() + ' 条'}"></span>
+                </div>
+                <div class="card-body p-3">
+
+                    <!-- 空态：还没有任何关键词 -->
+                    <div th:if="${news.empty and keywords.empty}"
+                         class="text-center py-5 px-3">
+                        <div style="font-size:3rem; line-height:1;">📭</div>
+                        <h5 class="mt-3 mb-2 text-secondary">还没有任何新闻</h5>
+                        <p class="text-muted mb-4">
+                            在左侧输入框中添加你感兴趣的关键词（如「比亚迪」「新能源」），<br>
+                            系统将自动抓取相关财经资讯，并每 30 分钟更新一次。
+                        </p>
+                        <div class="d-flex justify-content-center align-items-center gap-2 text-primary fw-bold"
+                             style="font-size:0.9rem;">
+                            <span style="font-size:1.4rem;">←</span>
+                            <span>从左侧「我的关键词」面板开始</span>
+                        </div>
+                    </div>
+
+                    <!-- 空态：有关键词但还没抓到新闻 -->
+                    <div th:if="${news.empty and !keywords.empty}"
+                         class="text-center py-5 px-3">
+                        <div style="font-size:3rem; line-height:1;">⏳</div>
+                        <h5 class="mt-3 mb-2 text-secondary">
+                            <span th:if="${activeKeyword != null}">
+                                「<span th:text="${activeKeyword}"></span>」暂无新闻
+                            </span>
+                            <span th:if="${activeKeyword == null}">新闻正在抓取中...</span>
+                        </h5>
+                        <p class="text-muted mb-4">
+                            <span th:if="${activeKeyword != null}">
+                                该关键词下暂未抓取到新闻，可点击关键词旁的「↻」手动触发刷新。
+                            </span>
+                            <span th:if="${activeKeyword == null}">
+                                关键词已添加，系统正在后台抓取相关新闻。<br>
+                                稍后刷新页面，或点击关键词旁的「↻」立即触发。
+                            </span>
+                        </p>
+                        <a th:if="${activeKeyword != null}"
+                           th:href="@{/news/keywords/fetch/{id}(id=${keywords[0].id})}"
+                           class="btn btn-outline-primary btn-sm">↻ 立即刷新</a>
+                    </div>
+
+                    <div th:each="item : ${news}" class="news-card">
+                        <h6>
+                            <a th:href="${item.url}" th:text="${item.title}"
+                               target="_blank" rel="noopener"></a>
+                            <span th:if="${item.keyword != null}" class="kw-tag"
+                                  th:text="${item.keyword}"></span>
+                        </h6>
+                        <p th:if="${item.content != null and item.content != item.title}"
+                           class="small text-muted mb-1"
+                           th:text="${#strings.abbreviate(item.content, 120)}"></p>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="news-meta">
+                                来源：<strong th:text="${item.source}"></strong>
+                                &nbsp;|&nbsp;
+                                <span th:text="${item.fetchedAt != null ?
+                                    #dates.format(item.fetchedAt, 'MM-dd HH:mm') :
+                                    #dates.format(item.publishTime, 'MM-dd HH:mm')}"></span>
+                                &nbsp;|&nbsp;
+                                <span th:text="${item.category}"></span>
+                            </div>
+                            <!-- AI解读按钮：用 data-* 传值，避免 th:onclick 安全限制 -->
+                            <button class="btn btn-xs btn-news-ai"
+                                    style="font-size:0.72rem; padding:2px 8px; color:#6f42c1; border:1px solid #6f42c1; border-radius:4px; background:white;"
+                                    th:attr="data-title=${item.title},
+                                             data-summary=${item.content != null ? #strings.abbreviate(item.content, 200) : ''},
+                                             data-source=${item.source}">
+                                🤖 AI解读
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- AI 分析弹窗（新闻解读 + 关键词情绪共用） -->
+<div class="modal fade" id="newsAiModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">🤖 AI 分析 — <span id="ai-modal-title"></span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="ai-news-loading" class="text-center py-4">
+                    <div class="spinner-sm-ring"></div>
+                    <p class="text-muted small">DeepSeek AI 正在分析...</p>
+                </div>
+                <div id="ai-news-body" style="display:none;"></div>
+                <div id="ai-news-error" class="alert alert-warning" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <small id="ai-news-time" class="text-muted me-auto"></small>
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    let newsAiModal = null;
+
+    function showNewsAiModal(title, url, onLoad) {
+        document.getElementById('ai-modal-title').textContent = title;
+        document.getElementById('ai-news-loading').style.display = 'block';
+        document.getElementById('ai-news-body').style.display = 'none';
+        document.getElementById('ai-news-error').style.display = 'none';
+        document.getElementById('ai-news-time').textContent = '';
+
+        if (!newsAiModal) newsAiModal = new bootstrap.Modal(document.getElementById('newsAiModal'));
+        newsAiModal.show();
+
+        const start = Date.now();
+        fetch(url)
+            .then(r => { if (!r.ok) throw new Error('服务器返回 ' + r.status); return r.text(); })
+            .then(md => {
+                document.getElementById('ai-news-body').innerHTML = marked.parse(md);
+                document.getElementById('ai-news-loading').style.display = 'none';
+                document.getElementById('ai-news-body').style.display = 'block';
+                document.getElementById('ai-news-time').textContent =
+                    '生成耗时 ' + ((Date.now() - start) / 1000).toFixed(1) + 's';
+            })
+            .catch(e => {
+                document.getElementById('ai-news-loading').style.display = 'none';
+                document.getElementById('ai-news-error').textContent = '分析失败：' + e.message;
+                document.getElementById('ai-news-error').style.display = 'block';
+            });
+    }
+
+    // 单条新闻 AI解读
+    document.addEventListener('click', function(e) {
+        const btn = e.target.closest('.btn-news-ai');
+        if (btn) {
+            const title   = btn.dataset.title   || '';
+            const summary = btn.dataset.summary || '';
+            const source  = btn.dataset.source  || '';
+            const url = '/api/ai-advice/news?title=' + encodeURIComponent(title)
+                      + '&summary=' + encodeURIComponent(summary)
+                      + '&source='  + encodeURIComponent(source);
+            showNewsAiModal('新闻解读', url);
+        }
+    });
+
+    // 关键词情绪汇总
+    document.addEventListener('click', function(e) {
+        const btn = e.target.closest('.btn-kw-sentiment');
+        if (btn) {
+            const keyword = btn.dataset.keyword || '';
+            const url = '/api/ai-advice/news-keyword?keyword=' + encodeURIComponent(keyword);
+            showNewsAiModal('「' + keyword + '」情绪汇总', url);
+        }
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>仪表盘 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar {
+            background-color: #343a40; color: white;
+            height: 100vh; position: fixed;
+            top: 0; left: 0; width: 210px; padding-top: 20px;
+        }
+        .sidebar a { color: white; padding: 10px 15px; display: block; text-decoration: none; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar a.active { background-color: #0d6efd; }
+        .content { margin-left: 210px; padding: 24px; }
+        .card { margin-bottom: 24px; }
+        .positive { color: #198754; font-weight: bold; }
+        .negative { color: #dc3545; font-weight: bold; }
+
+        /* 触发预警横幅 */
+        .alert-banner {
+            border-left: 5px solid #dc3545;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%   { box-shadow: 0 0 0 0 rgba(220,53,69,0.4); }
+            70%  { box-shadow: 0 0 0 8px rgba(220,53,69,0); }
+            100% { box-shadow: 0 0 0 0 rgba(220,53,69,0); }
+        }
+
+        /* 股票行涨跌颜色 */
+        .up   { color: #dc3545; }
+        .down { color: #198754; }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h5 class="text-center mb-4">资产管理助手</h5>
+    <a href="/dashboard" class="active">仪表盘</a>
+    <a href="/assets">资产配置</a>
+    <a href="/dca">定投计划</a>
+    <a href="/goals">投资目标</a>
+    <a href="/stocks">股票/基金</a>
+    <a href="/warnings">预警管理</a>
+    <a href="/news">财经新闻</a>
+    <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+    <a href="/logout">退出登录</a>
+</div>
+
+<div class="content">
+
+    <!-- ① 触发预警横幅（有触发预警时才显示）-->
+    <div th:if="${triggeredWarnings != null and !triggeredWarnings.empty}"
+         class="alert alert-danger alert-banner mb-4" role="alert">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <strong>🔔 有 <span th:text="${#lists.size(triggeredWarnings)}"></span> 条预警已触发，请及时处理！</strong>
+                <ul class="mb-0 mt-1">
+                    <li th:each="tw : ${triggeredWarnings}">
+                        <span th:text="${tw.name}"></span>(<span th:text="${tw.code}"></span>)
+                        —
+                        <span th:text="${tw.status == 'WARNING'} ? '⚠ 价格预警' :
+                                        (${tw.status == 'PROFIT'}  ? '🎯 止盈触发' : '🔴 止损触发')"></span>
+                        &nbsp;触发价: <strong th:text="${tw.triggeredPrice}"></strong>
+                    </li>
+                </ul>
+            </div>
+            <a href="/warnings" class="btn btn-danger btn-sm">前往处理</a>
+        </div>
+    </div>
+
+    <h4 class="mb-4">仪表盘</h4>
+
+    <!-- ① 定投到期提醒 -->
+    <div th:if="${dcaDuePlans != null and !dcaDuePlans.empty}"
+         class="alert alert-warning d-flex justify-content-between align-items-center mb-3 py-2">
+        <div>
+            📅 <strong>有 <span th:text="${#lists.size(dcaDuePlans)}"></span> 个定投计划待执行：</strong>
+            <span th:each="p, iter : ${dcaDuePlans}">
+                <span th:text="${p.name}"></span><span th:if="${!iter.last}">、</span>
+            </span>
+        </div>
+        <a href="/dca" class="btn btn-warning btn-sm ms-3">前往记录</a>
+    </div>
+
+    <!-- ① 市场情绪卡片 -->
+    <div class="card shadow-sm mb-4" id="sentiment-card">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+            <strong>📊 A股市场情绪</strong>
+            <small id="sentiment-update" class="opacity-75">加载中...</small>
+        </div>
+        <div class="card-body py-3">
+            <div class="row align-items-center">
+                <!-- 左：情绪分值 -->
+                <div class="col-md-3 text-center border-end">
+                    <div id="sentiment-score"
+                         style="font-size:3rem; font-weight:700; line-height:1; color:#6c757d;">--</div>
+                    <div id="sentiment-level"
+                         class="badge mt-1 fs-6" style="background:#6c757d;">数据加载中</div>
+                    <div class="text-muted small mt-1">情绪指数（0~100）</div>
+                </div>
+                <!-- 右：涨跌家数 -->
+                <div class="col-md-9">
+                    <div class="mb-2">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="small fw-bold text-danger">上涨</span>
+                            <span class="small" id="up-count">-- 家</span>
+                        </div>
+                        <div class="progress" style="height:12px;">
+                            <div id="up-bar" class="progress-bar bg-danger" style="width:0%"></div>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="small fw-bold text-success">下跌</span>
+                            <span class="small" id="down-count">-- 家</span>
+                        </div>
+                        <div class="progress" style="height:12px;">
+                            <div id="down-bar" class="progress-bar bg-success" style="width:0%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="small fw-bold text-secondary">平盘</span>
+                            <span class="small" id="flat-count">-- 家</span>
+                        </div>
+                        <div class="progress" style="height:12px;">
+                            <div id="flat-bar" class="progress-bar bg-secondary" style="width:0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ② 资产配置为空提示 -->
+    <div th:if="${!hasAssets}" class="alert alert-warning text-center">
+        <h5>尚未配置资产</h5>
+        <p class="mb-2">请先录入您的持仓信息，系统将自动追踪收益变化。</p>
+        <a href="/assets/init" class="btn btn-primary">立即配置资产</a>
+    </div>
+
+    <!-- ③ 个人资产配置 -->
+    <div th:if="${hasAssets}" class="card shadow-sm">
+        <div class="card-header bg-primary text-white">
+            <strong>个人资产配置</strong>
+        </div>
+        <div class="card-body">
+            <!-- 关键指标行 -->
+            <div class="row mb-3 g-2">
+                <div class="col-md-2">
+                    <div class="card text-center border-0 bg-light h-100">
+                        <div class="card-body py-2">
+                            <div class="fs-6 fw-bold" th:text="${totalCost} + ' 元'"></div>
+                            <small class="text-muted">持仓成本</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="card text-center border-0 bg-light h-100">
+                        <div class="card-body py-2">
+                            <div class="fs-6 fw-bold" th:text="${totalAssetValue} + ' 元'"></div>
+                            <small class="text-muted">当前市值</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center border-0 bg-light h-100">
+                        <div class="card-body py-2">
+                            <div class="fs-6 fw-bold"
+                                 th:classappend="${unrealizedReturn >= 0 ? 'positive' : 'negative'}"
+                                 th:text="${unrealizedReturn} + ' 元'"></div>
+                            <small class="text-muted">浮动盈亏</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center border-0 bg-light h-100">
+                        <div class="card-body py-2">
+                            <div class="fs-6 fw-bold"
+                                 th:classappend="${realizedReturn >= 0 ? 'positive' : 'negative'}"
+                                 th:text="${realizedReturn} + ' 元'"></div>
+                            <small class="text-muted">已实现盈亏</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="card text-center border-0 bg-light h-100">
+                        <div class="card-body py-2">
+                            <div class="fs-6 fw-bold"
+                                 th:classappend="${totalReturn >= 0 ? 'positive' : 'negative'}"
+                                 th:text="${totalReturn} + ' 元'"></div>
+                            <small class="text-muted">
+                                总收益
+                                <span th:classappend="${returnRate >= 0 ? 'positive' : 'negative'}"
+                                      th:text="'(' + ${#numbers.formatDecimal(returnRate,1,2)} + '%)'"></span>
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 资产配置比例 -->
+            <div class="mb-3">
+                <h6>资产配置比例</h6>
+                <div th:each="item : ${assetAllocation}" class="d-flex align-items-center mb-1">
+                    <span style="width:60px" th:text="${item.key}"></span>
+                    <div class="progress flex-grow-1 mx-2" style="height:14px;">
+                        <div class="progress-bar" role="progressbar"
+                             th:style="'width:' + ${item.value} + '%'"
+                             th:text="${item.value} + '%'"></div>
+                    </div>
+                </div>
+            </div>
+
+            <h6>资产明细</h6>
+            <table class="table table-sm table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>类型</th><th>名称</th><th>代码</th>
+                        <th>持有量</th><th>成本均价</th><th>当前价</th>
+                        <th>总价值</th><th>收益</th><th>持仓时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="asset : ${assets}">
+                        <td th:text="${asset.type}"></td>
+                        <td th:text="${asset.name}"></td>
+                        <td th:text="${asset.code}"></td>
+                        <td th:text="${asset.amount}"></td>
+                        <td th:text="${asset.purchasePrice}"></td>
+                        <td th:text="${asset.currentPrice}"></td>
+                        <td th:text="${asset.totalValue}"></td>
+                        <td th:with="profit=${asset.totalValue.subtract(asset.amount.multiply(asset.purchasePrice))}"
+                            th:classappend="${profit.compareTo(T(java.math.BigDecimal).ZERO) >= 0 ? 'positive' : 'negative'}"
+                            th:text="${profit}"></td>
+                        <td th:with="days=${T(java.time.temporal.ChronoUnit).DAYS.between(asset.purchaseDate.toInstant().atZone(T(java.time.ZoneId).systemDefault()).toLocalDate(), T(java.time.LocalDate).now())}"
+                            th:text="${days} + ' 天'"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ④ 历史净值曲线图 -->
+    <div th:if="${hasAssets}" class="card shadow-sm">
+        <div class="card-header bg-primary text-white">
+            <strong>📈 历史净值走势</strong>
+        </div>
+        <div class="card-body">
+            <div id="no-chart-data" class="text-center text-muted py-3" style="display:none">
+                暂无历史数据，系统将在每个交易日 18:00 自动记录一次净值快照
+            </div>
+            <canvas id="netValueChart" height="80"></canvas>
+        </div>
+    </div>
+
+    <!-- ⑤ 关注的股票/基金 -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-primary text-white d-flex justify-content-between">
+            <strong>关注的股票/基金</strong>
+            <a href="/stocks/add" class="btn btn-light btn-sm">+ 添加</a>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0" th:if="${!stocks.empty}">
+                <thead class="table-light">
+                    <tr>
+                        <th>类型</th><th>名称</th><th>代码</th>
+                        <th>当前价</th><th>涨跌额</th><th>涨跌幅</th>
+                        <th>市场</th><th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="stock : ${stocks}">
+                        <td th:text="${stock.type}"></td>
+                        <td th:text="${stock.name}"></td>
+                        <td th:text="${stock.code}"></td>
+                        <td th:text="${stock.price}"></td>
+                        <td th:classappend="${stock.priceChange != null and stock.priceChange.compareTo(T(java.math.BigDecimal).ZERO) >= 0 ? 'up' : 'down'}"
+                            th:text="${stock.priceChange}"></td>
+                        <td th:classappend="${stock.changePercent != null and stock.changePercent.compareTo(T(java.math.BigDecimal).ZERO) >= 0 ? 'up' : 'down'}"
+                            th:text="${stock.changePercent} + '%'"></td>
+                        <td th:text="${stock.market}"></td>
+                        <td>
+                            <a th:href="@{/stocks/edit/{id}(id=${stock.id})}" class="btn btn-sm btn-outline-primary">编辑</a>
+                            <a th:href="@{/stocks/delete/{id}(id=${stock.id})}" class="btn btn-sm btn-outline-danger"
+                               onclick="return confirm('确定删除？')">删除</a>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <div th:if="${stocks.empty}" class="text-center py-4">
+                <p class="text-muted">暂未关注任何股票或基金</p>
+                <a href="/stocks/add" class="btn btn-primary">添加关注</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- ⑤ 预警概览 -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-primary text-white d-flex justify-content-between">
+            <strong>预警概览</strong>
+            <a href="/warnings" class="btn btn-light btn-sm">查看全部</a>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0" th:if="${!warnings.empty}">
+                <thead class="table-light">
+                    <tr>
+                        <th>状态</th><th>类型</th><th>名称</th><th>代码</th>
+                        <th>警告线</th><th>止盈线</th><th>止损线</th><th>触发价</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="w : ${warnings}"
+                        th:classappend="${w.status == 'LOSS'} ? 'table-danger' :
+                                        (${w.status == 'PROFIT'} ? 'table-success' :
+                                        (${w.status == 'WARNING'} ? 'table-warning' : ''))">
+                        <td>
+                            <span class="badge"
+                                  th:classappend="${w.status == 'ACTIVE'}   ? 'bg-primary'   :
+                                                  (${w.status == 'WARNING'} ? 'bg-warning text-dark' :
+                                                  (${w.status == 'PROFIT'}  ? 'bg-success'   :
+                                                  (${w.status == 'LOSS'}    ? 'bg-danger'    : 'bg-secondary')))"
+                                  th:text="${w.status == 'ACTIVE'}   ? '监控中'   :
+                                            (${w.status == 'WARNING'} ? '⚠ 价格预警' :
+                                            (${w.status == 'PROFIT'}  ? '🎯 止盈'   :
+                                            (${w.status == 'LOSS'}    ? '🔴 止损'   : '✅ 已处理')))">
+                            </span>
+                        </td>
+                        <td th:text="${w.type}"></td>
+                        <td th:text="${w.name}"></td>
+                        <td th:text="${w.code}"></td>
+                        <td th:text="${w.warningPoint}"></td>
+                        <td th:text="${w.stopProfitPoint}"></td>
+                        <td th:text="${w.stopLossPoint}"></td>
+                        <td th:text="${w.triggeredPrice != null ? w.triggeredPrice : '-'}"></td>
+                    </tr>
+                </tbody>
+            </table>
+            <div th:if="${warnings.empty}" class="text-center py-4">
+                <p class="text-muted">暂无预警，建议为持仓标的设置预警</p>
+                <a href="/warnings/add" class="btn btn-primary">添加预警</a>
+            </div>
+        </div>
+    </div>
+
+</div>
+</body>
+
+<!-- ===== 预警实时弹窗 ===== -->
+<!-- 弹窗容器：触发时动态插入并显示 -->
+<div class="modal fade" id="warningAlertModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-danger">
+            <div class="modal-header bg-danger text-white py-2">
+                <h6 class="modal-title mb-0">🔔 预警触发通知</h6>
+                <button type="button" class="btn-close btn-close-white"
+                        data-bs-dismiss="modal" onclick="dismissWarning()"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div id="warning-popup-list"></div>
+            </div>
+            <div class="modal-footer py-2">
+                <a href="/warnings" class="btn btn-danger btn-sm">前往处理预警</a>
+                <button type="button" class="btn btn-secondary btn-sm"
+                        data-bs-dismiss="modal" onclick="dismissWarning()">知道了</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // 每 30 秒轮询一次预警通知接口
+    let warningModal = null;
+    let pendingQueue = [];
+
+    function pollWarnings() {
+        fetch('/api/warnings/pending')
+            .then(r => r.ok ? r.json() : [])
+            .then(notifications => {
+                if (notifications && notifications.length > 0) {
+                    showWarningPopup(notifications);
+                }
+            })
+            .catch(() => {}); // 静默失败
+    }
+
+    function showWarningPopup(list) {
+        const container = document.getElementById('warning-popup-list');
+        container.innerHTML = '';
+
+        list.forEach(n => {
+            const colorClass = n.status === 'LOSS' ? 'danger' :
+                               n.status === 'PROFIT' ? 'success' : 'warning';
+            const div = document.createElement('div');
+            div.className = 'p-3 border-bottom';
+            div.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <strong>${n.name}（${n.code}）</strong>
+                        <span class="badge bg-${colorClass} ms-2">${n.label}</span>
+                    </div>
+                    <span class="text-danger fw-bold fs-5">${n.price} 元</span>
+                </div>
+                ${n.meaning ? `<small class="text-muted">${n.meaning}</small>` : ''}
+            `;
+            container.appendChild(div);
+        });
+
+        if (!warningModal) {
+            warningModal = new bootstrap.Modal(document.getElementById('warningAlertModal'));
+        }
+        warningModal.show();
+
+        // 同时播放提示音（如果浏览器支持）
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            osc.connect(ctx.destination);
+            osc.frequency.value = 880;
+            osc.start();
+            osc.stop(ctx.currentTime + 0.15);
+        } catch(e) {}
+    }
+
+    function dismissWarning() {
+        if (warningModal) warningModal.hide();
+    }
+
+    // 页面加载后立即轮询一次，之后每 30 秒一次
+    pollWarnings();
+    setInterval(pollWarnings, 30000);
+
+    // ===== 市场情绪 =====
+    function loadSentiment() {
+        fetch('/api/market-sentiment')
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                if (!d) return;
+                const badge = document.getElementById('sentiment-level');
+                badge.textContent = d.level;
+                badge.style.background = d.color;
+                document.getElementById('sentiment-update').textContent = '更新于 ' + d.updateTime;
+
+                if (!d.isTrading) {
+                    // 休市状态：隐藏分值，只显示等级和涨跌数（上次收盘数据）
+                    document.getElementById('sentiment-score').textContent = '--';
+                    document.getElementById('sentiment-score').style.color = d.color;
+                } else {
+                    document.getElementById('sentiment-score').textContent = d.score;
+                    document.getElementById('sentiment-score').style.color = d.color;
+                }
+
+                const total = d.totalCount || 1;
+                document.getElementById('up-count').textContent = d.upCount + ' 家';
+                document.getElementById('down-count').textContent = d.downCount + ' 家';
+                document.getElementById('flat-count').textContent = d.flatCount + ' 家';
+                document.getElementById('up-bar').style.width = (d.upCount / total * 100).toFixed(1) + '%';
+                document.getElementById('down-bar').style.width = (d.downCount / total * 100).toFixed(1) + '%';
+                document.getElementById('flat-bar').style.width = (d.flatCount / total * 100).toFixed(1) + '%';
+            })
+            .catch(() => {});
+    }
+
+    loadSentiment();
+    setInterval(loadSentiment, 300000); // 每5分钟刷新
+
+    // ===== 历史净值曲线 =====
+    fetch('/api/net-value-history')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            if (!data || data.dates.length === 0) {
+                document.getElementById('no-chart-data').style.display = 'block';
+                document.getElementById('netValueChart').style.display = 'none';
+                return;
+            }
+            new Chart(document.getElementById('netValueChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: data.dates,
+                    datasets: [
+                        {
+                            label: '总市值（元）',
+                            data: data.values,
+                            borderColor: '#0d6efd',
+                            backgroundColor: 'rgba(13,110,253,0.08)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 3
+                        },
+                        {
+                            label: '总成本（元）',
+                            data: data.costs,
+                            borderColor: '#6c757d',
+                            borderDash: [5, 5],
+                            backgroundColor: 'transparent',
+                            fill: false,
+                            tension: 0.3,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { position: 'top' } },
+                    scales: {
+                        y: { beginAtZero: false }
+                    }
+                }
+            });
+        })
+        .catch(() => {});
+</script>
+</html>

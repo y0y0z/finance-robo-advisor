@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>买入 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar { background-color: #343a40; color: white; min-height: 100vh; }
+        .sidebar a { color: white; text-decoration: none; display: block; padding: 10px 15px; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar .active { background-color: #007bff; }
+        .content { padding: 24px; }
+        .form-card { background: #fff; border-radius: 12px; padding: 32px; max-width: 560px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+        .cost-preview { background: #fff8e1; border-radius: 8px; padding: 12px 16px; font-size: 0.9rem; }
+        .hint { font-size: 0.82rem; color: #6c757d; margin-top: 4px; }
+    </style>
+</head>
+<body>
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-2 sidebar">
+            <h5 class="p-3">资产管理助手</h5>
+            <a href="/dashboard">仪表盘</a>
+            <a href="/assets" class="active">资产配置</a>
+            <a href="/dca">定投计划</a>
+    <a href="/goals">投资目标</a>
+            <a href="/stocks">股票/基金</a>
+            <a href="/warnings">预警管理</a>
+            <a href="/news">财经新闻</a>
+            <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+            <a href="/logout">退出登录</a>
+        </div>
+
+        <div class="col-md-10 content">
+            <div class="mb-3">
+                <a th:href="@{/assets/{id}/trades(id=${asset.id})}"
+                   class="text-decoration-none text-secondary">← 返回交易记录</a>
+            </div>
+
+            <div class="form-card">
+                <h5 class="mb-1">📈 买入</h5>
+                <p class="text-muted small mb-4"
+                   th:text="${asset.name} + '（' + ${asset.code} + '）— 当前持仓 '
+                           + ${asset.amount}
+                           + (${asset.type == '基金'} ? ' 份，成本净值 ¥' : ' 股，均价 ¥')
+                           + ${asset.purchasePrice}">
+                </p>
+
+                <form th:action="@{/assets/{id}/buy(id=${asset.id})}" method="post">
+
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <!-- 基金：投入金额；股票/其他：买入数量 -->
+                            <label class="form-label fw-semibold">
+                                <span th:text="${asset.type == '基金'} ? '投入金额（元）' : '买入数量（股）'">买入数量</span>
+                                <span class="text-danger">*</span>
+                            </label>
+                            <input type="number" name="quantity" class="form-control"
+                                   th:placeholder="${asset.type == '基金'} ? '如：1000.00' : '如：100'"
+                                   min="0.01" step="0.01" required id="qty">
+                            <div class="hint"
+                                 th:text="${asset.type == '基金'} ? '填写投入的总金额，系统自动换算份额' : '填写实际买入股数'">
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">
+                                <span th:text="${asset.type == '基金'} ? '购买净值（元/份）' : '成交价格（元/股）'">成交价格</span>
+                                <span class="text-danger">*</span>
+                            </label>
+                            <input type="number" name="price" class="form-control"
+                                   th:placeholder="${asset.type == '基金'}
+                                       ? '参考当前净值 ¥' + ${asset.currentPrice}
+                                       : '参考当前价 ¥'  + ${asset.currentPrice}"
+                                   min="0.0001" step="0.0001" required id="price">
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">交易日期 <span class="text-danger">*</span></label>
+                            <input type="date" name="tradeDate" class="form-control"
+                                   th:value="${#dates.format(#dates.createNow(), 'yyyy-MM-dd')}" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">手续费（元）</label>
+                            <input type="number" name="fee" class="form-control"
+                                   placeholder="0.00" min="0" step="0.01" value="0">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">备注</label>
+                        <input type="text" name="remark" class="form-control"
+                               placeholder="可选，如：逢低补仓" maxlength="200">
+                    </div>
+
+                    <!-- 实时预览（后端渲染类型，JS只做展示计算） -->
+                    <div class="cost-preview mb-4" id="preview" style="display:none">
+                        <span th:if="${asset.type == '基金'}">
+                            预计获得份额：<strong id="previewShares">—</strong> 份 &nbsp;|&nbsp;
+                        </span>
+                        买入金额：<strong id="previewAmount">—</strong> 元 &nbsp;|&nbsp;
+                        买入后新均价约：<strong id="previewAvg">—</strong> 元
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-danger px-4">确认买入</button>
+                        <a th:href="@{/assets/{id}/trades(id=${asset.id})}"
+                           class="btn btn-outline-secondary">取消</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script th:inline="javascript">
+    const curQty  = parseFloat([[${asset.amount}]]) || 0;
+    const curAvg  = parseFloat([[${asset.purchasePrice}]]) || 0;
+    const isFund  = [[${asset.type == '基金'}]];   // true/false，服务端注入
+
+    function recalc() {
+        const input = parseFloat(document.getElementById('qty').value) || 0;
+        const price = parseFloat(document.getElementById('price').value) || 0;
+        if (input <= 0 || price <= 0) { document.getElementById('preview').style.display = 'none'; return; }
+
+        let qty, amount;
+        if (isFund) {
+            // 基金：input 是投入金额，qty 是预计份额（向下取小数2位）
+            qty    = Math.floor(input / price * 100) / 100;
+            amount = input.toFixed(2);
+        } else {
+            qty    = input;
+            amount = (qty * price).toFixed(2);
+        }
+
+        const newQty  = curQty + qty;
+        const newAvg  = newQty > 0 ? ((curQty * curAvg + qty * price) / newQty).toFixed(4) : price.toFixed(4);
+
+        const sharesEl = document.getElementById('previewShares');
+        if (sharesEl) sharesEl.textContent = qty.toFixed(2);
+        document.getElementById('previewAmount').textContent = amount;
+        document.getElementById('previewAvg').textContent    = newAvg;
+        document.getElementById('preview').style.display     = 'block';
+    }
+
+    document.getElementById('qty').addEventListener('input', recalc);
+    document.getElementById('price').addEventListener('input', recalc);
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

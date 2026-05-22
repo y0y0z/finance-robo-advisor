@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>卖出 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar { background-color: #343a40; color: white; min-height: 100vh; }
+        .sidebar a { color: white; text-decoration: none; display: block; padding: 10px 15px; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar .active { background-color: #007bff; }
+        .content { padding: 24px; }
+        .form-card { background: #fff; border-radius: 12px; padding: 32px; max-width: 560px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+        .pnl-preview { border-radius: 8px; padding: 12px 16px; font-size: 0.9rem; }
+        .pnl-pos { background: #fff1f2; color: #dc3545; }
+        .pnl-neg { background: #f0fdf4; color: #198754; }
+        .pnl-zero { background: #f8f9fa; color: #6c757d; }
+    </style>
+</head>
+<body>
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-2 sidebar">
+            <h5 class="p-3">资产管理助手</h5>
+            <a href="/dashboard">仪表盘</a>
+            <a href="/assets" class="active">资产配置</a>
+            <a href="/dca">定投计划</a>
+    <a href="/goals">投资目标</a>
+            <a href="/stocks">股票/基金</a>
+            <a href="/warnings">预警管理</a>
+            <a href="/news">财经新闻</a>
+            <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+            <a href="/logout">退出登录</a>
+        </div>
+
+        <div class="col-md-10 content">
+            <div class="mb-3">
+                <a th:href="@{/assets/{id}/trades(id=${asset.id})}"
+                   class="text-decoration-none text-secondary">← 返回交易记录</a>
+            </div>
+
+            <div class="form-card">
+                <h5 class="mb-1">📉 卖出</h5>
+                <p class="text-muted small mb-4"
+                   th:text="${asset.name} + '（' + ${asset.code} + '）— 当前持仓 ' + ${asset.amount} + ' 股，成本均价 ¥' + ${asset.purchasePrice}">
+                </p>
+
+                <!-- 错误提示 -->
+                <div th:if="${error}" class="alert alert-danger alert-dismissible fade show mb-3" role="alert">
+                    <span th:text="${error}"></span>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+
+                <form th:action="@{/assets/{id}/sell(id=${asset.id})}" method="post">
+
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">卖出数量（股）<span class="text-danger">*</span></label>
+                            <input type="number" name="quantity" class="form-control"
+                                   placeholder="如：100"
+                                   th:attr="max=${asset.amount}"
+                                   min="1" step="1" required id="qty">
+                            <div class="form-text text-muted"
+                                 th:text="'最多可卖 ' + ${asset.amount} + ' 股'"></div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">成交价格（元）<span class="text-danger">*</span></label>
+                            <input type="number" name="price" class="form-control"
+                                   placeholder="如：18.50"
+                                   th:attr="placeholder='参考当前价 ¥' + ${asset.currentPrice}"
+                                   min="0.0001" step="0.0001" required id="price">
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">交易日期<span class="text-danger">*</span></label>
+                            <input type="date" name="tradeDate" class="form-control"
+                                   th:value="${#dates.format(#dates.createNow(), 'yyyy-MM-dd')}" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">手续费（元）</label>
+                            <input type="number" name="fee" class="form-control"
+                                   placeholder="0.00" min="0" step="0.01" value="0" id="fee">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">备注</label>
+                        <input type="text" name="remark" class="form-control"
+                               placeholder="可选，如：止盈离场" maxlength="200">
+                    </div>
+
+                    <!-- 实时预览盈亏 -->
+                    <div class="pnl-preview pnl-zero mb-4" id="pnlPreview" style="display:none">
+                        本次卖出金额：<strong id="previewAmount">—</strong> 元 &nbsp;|&nbsp;
+                        预计盈亏：<strong id="previewPnl">—</strong> 元
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-success px-4">确认卖出</button>
+                        <a th:href="@{/assets/{id}/trades(id=${asset.id})}"
+                           class="btn btn-outline-secondary">取消</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script th:inline="javascript">
+    const avgCost = parseFloat([[${asset.purchasePrice}]]) || 0;
+
+    function recalc() {
+        const qty   = parseFloat(document.getElementById('qty').value) || 0;
+        const price = parseFloat(document.getElementById('price').value) || 0;
+        const fee   = parseFloat(document.getElementById('fee').value) || 0;
+        const el    = document.getElementById('pnlPreview');
+
+        if (qty <= 0 || price <= 0) { el.style.display = 'none'; return; }
+
+        const amount = (qty * price).toFixed(2);
+        const pnl    = ((price - avgCost) * qty - fee).toFixed(2);
+
+        document.getElementById('previewAmount').textContent = amount;
+        document.getElementById('previewPnl').textContent   = (pnl >= 0 ? '+' : '') + pnl;
+
+        el.className = 'pnl-preview mb-4 ' + (pnl > 0 ? 'pnl-pos' : pnl < 0 ? 'pnl-neg' : 'pnl-zero');
+        el.style.display = 'block';
+    }
+
+    document.getElementById('qty').addEventListener('input', recalc);
+    document.getElementById('price').addEventListener('input', recalc);
+    document.getElementById('fee').addEventListener('input', recalc);
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

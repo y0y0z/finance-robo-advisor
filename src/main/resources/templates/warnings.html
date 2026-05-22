@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>预警管理 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar { background-color: #343a40; color: white; min-height: 100vh; }
+        .sidebar a { color: white; text-decoration: none; display: block; padding: 10px 15px; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar .active { background-color: #007bff; }
+        .content { padding: 20px; }
+
+        /* 预警状态行颜色 */
+        tr.status-WARNING  { background-color: #fff3cd; }
+        tr.status-PROFIT   { background-color: #d1e7dd; }
+        tr.status-LOSS     { background-color: #f8d7da; }
+        tr.status-RESOLVED { background-color: #e9ecef; color: #6c757d; }
+        /* AI 生成的预警行：淡紫色背景 */
+        tr.ai-warning { background-color: #f3e8ff !important; }
+
+        .badge-ACTIVE    { background-color: #0d6efd; }
+        .badge-WARNING   { background-color: #ffc107; color: #000; }
+        .badge-PROFIT    { background-color: #198754; }
+        .badge-LOSS      { background-color: #dc3545; }
+        .badge-RESOLVED  { background-color: #6c757d; }
+
+        .ai-reason-text { font-size: 0.78rem; color: #6f42c1; margin-top: 4px; line-height: 1.5; }
+        .source-badge-ai { background-color: #6f42c1; font-size: 0.7rem; }
+        .source-badge-manual { background-color: #6c757d; font-size: 0.7rem; }
+    </style>
+</head>
+<body>
+<div class="container-fluid">
+    <div class="row">
+        <!-- 侧边栏 -->
+        <div class="col-md-2 sidebar">
+            <h5 class="p-3">资产管理助手</h5>
+            <a href="/dashboard">仪表盘</a>
+            <a href="/assets">资产配置</a>
+            <a href="/dca">定投计划</a>
+    <a href="/goals">投资目标</a>
+            <a href="/stocks">股票/基金</a>
+            <a href="/warnings" class="active">预警管理</a>
+            <a href="/news">财经新闻</a>
+            <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+            <a href="/logout">退出登录</a>
+        </div>
+
+        <!-- 主内容 -->
+        <div class="col-md-10 content">
+            <div class="mt-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4>预警管理</h4>
+                    <a href="/warnings/add" class="btn btn-primary">+ 添加预警</a>
+                </div>
+
+                <!-- 触发统计卡片 -->
+                <div class="row mb-4" th:if="${warnings != null and !warnings.empty}">
+                    <div class="col-md-2">
+                        <div class="card text-center border-primary">
+                            <div class="card-body py-2">
+                                <div class="fs-4 fw-bold text-primary"
+                                     th:text="${#lists.size(warnings)}">0</div>
+                                <small class="text-muted">全部预警</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center border-warning">
+                            <div class="card-body py-2">
+                                <div class="fs-4 fw-bold text-warning"
+                                     th:text="${#lists.size(warnings.?[status == 'WARNING'])}">0</div>
+                                <small class="text-muted">价格预警</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center border-success">
+                            <div class="card-body py-2">
+                                <div class="fs-4 fw-bold text-success"
+                                     th:text="${#lists.size(warnings.?[status == 'PROFIT'])}">0</div>
+                                <small class="text-muted">止盈触发</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center border-danger">
+                            <div class="card-body py-2">
+                                <div class="fs-4 fw-bold text-danger"
+                                     th:text="${#lists.size(warnings.?[status == 'LOSS'])}">0</div>
+                                <small class="text-muted">止损触发</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center border-purple" style="border-color:#6f42c1 !important;">
+                            <div class="card-body py-2">
+                                <div class="fs-4 fw-bold" style="color:#6f42c1;"
+                                     th:text="${#lists.size(warnings.?[aiGenerated != null and aiGenerated == true])}">0</div>
+                                <small class="text-muted">🤖 AI智能预警</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center border-secondary">
+                            <div class="card-body py-2">
+                                <div class="fs-4 fw-bold text-secondary"
+                                     th:text="${#lists.size(warnings.?[status == 'RESOLVED'])}">0</div>
+                                <small class="text-muted">已处理</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 说明文字 -->
+                <p class="text-muted small mb-2">
+                    <span style="color:#6f42c1;">■</span> 紫色背景为 🤖 AI 智能引擎自动生成的预警（含持仓风险、异常波动、新闻情绪分析）；
+                    白色/黄色/红色/绿色背景为手动设置的阈值预警。
+                </p>
+
+                <!-- 预警列表 -->
+                <div class="card shadow-sm" th:if="${warnings != null and !warnings.empty}">
+                    <div class="card-body p-0">
+                        <table class="table table-hover mb-0">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>来源</th>
+                                    <th>状态</th>
+                                    <th>类型</th>
+                                    <th>名称/代码</th>
+                                    <th>警告线</th>
+                                    <th>止盈线</th>
+                                    <th>止损线</th>
+                                    <th>触发价格</th>
+                                    <th>触发时间</th>
+                                    <th>含义 / AI分析</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr th:each="w : ${warnings}"
+                                    th:classappend="${w.aiGenerated == true} ? 'ai-warning' : ('status-' + ${w.status})">
+
+                                    <!-- 来源 -->
+                                    <td>
+                                        <span th:if="${w.aiGenerated == true}"
+                                              class="badge source-badge-ai text-white">🤖 AI智能</span>
+                                        <span th:unless="${w.aiGenerated == true}"
+                                              class="badge source-badge-manual text-white">手动</span>
+                                    </td>
+
+                                    <!-- 状态 -->
+                                    <td>
+                                        <span class="badge"
+                                              th:classappend="'badge-' + ${w.status}"
+                                              th:text="${w.status == 'ACTIVE'}   ? '监控中'   :
+                                                        (${w.status == 'WARNING'} ? '⚠ 预警'   :
+                                                        (${w.status == 'PROFIT'}  ? '🎯 止盈'  :
+                                                        (${w.status == 'LOSS'}    ? '🔴 止损'  : '✅ 已处理')))">
+                                        </span>
+                                    </td>
+
+                                    <td th:text="${w.type}"></td>
+
+                                    <td>
+                                        <strong th:text="${w.name}"></strong><br>
+                                        <small class="text-muted" th:text="${w.code}"></small>
+                                    </td>
+
+                                    <!-- 手动阈值（AI预警无阈值，显示 - ） -->
+                                    <td th:text="${w.warningPoint != null ? w.warningPoint : '-'}"></td>
+                                    <td th:text="${w.stopProfitPoint != null ? w.stopProfitPoint : '-'}"></td>
+                                    <td th:text="${w.stopLossPoint != null ? w.stopLossPoint : '-'}"></td>
+
+                                    <td>
+                                        <span th:if="${w.triggeredPrice != null}"
+                                              th:text="${w.triggeredPrice}"
+                                              class="fw-bold text-danger"></span>
+                                        <span th:if="${w.triggeredPrice == null}" class="text-muted">-</span>
+                                    </td>
+
+                                    <td>
+                                        <span th:if="${w.triggeredTime != null}"
+                                              th:text="${#dates.format(w.triggeredTime, 'MM-dd HH:mm')}"
+                                              class="text-muted small"></span>
+                                        <span th:if="${w.triggeredTime == null}" class="text-muted">-</span>
+                                    </td>
+
+                                    <!-- 含义 + AI分析理由 -->
+                                    <td>
+                                        <span th:text="${w.meaning}" class="small"></span>
+                                        <!-- AI 理由折叠展示 -->
+                                        <div th:if="${w.aiGenerated == true and w.aiReason != null}" class="ai-reason-text">
+                                            <details>
+                                                <summary style="cursor:pointer; color:#6f42c1; font-size:0.75rem;">查看AI分析详情</summary>
+                                                <span th:text="${w.aiReason}"></span>
+                                            </details>
+                                        </div>
+                                    </td>
+
+                                    <td>
+                                        <!-- 手动预警才显示编辑 -->
+                                        <a th:unless="${w.aiGenerated == true}"
+                                           th:href="@{/warnings/edit/{id}(id=${w.id})}"
+                                           class="btn btn-sm btn-outline-primary mb-1">编辑</a>
+                                        <!-- 已触发：显示确认处理 -->
+                                        <a th:if="${w.status == 'WARNING' or w.status == 'PROFIT' or w.status == 'LOSS'}"
+                                           th:href="@{/warnings/resolve/{id}(id=${w.id})}"
+                                           class="btn btn-sm btn-success mb-1">确认处理</a>
+                                        <!-- 已处理：显示重新激活 -->
+                                        <a th:if="${w.status == 'RESOLVED'}"
+                                           th:href="@{/warnings/reactivate/{id}(id=${w.id})}"
+                                           class="btn btn-sm btn-outline-secondary mb-1">重新监控</a>
+                                        <a th:href="@{/warnings/delete/{id}(id=${w.id})}"
+                                           class="btn btn-sm btn-outline-danger mb-1"
+                                           onclick="return confirm('确定要删除此预警吗？')">删除</a>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div th:if="${warnings == null or warnings.empty}" class="text-center py-5">
+                    <p class="text-muted">您还没有设置任何预警</p>
+                    <a href="/warnings/add" class="btn btn-primary">立即添加预警</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

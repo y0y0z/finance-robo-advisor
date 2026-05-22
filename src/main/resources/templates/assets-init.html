@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>资产初始化 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar { background-color: #343a40; color: white; min-height: 100vh; }
+        .sidebar a { color: white; text-decoration: none; display: block; padding: 10px 15px; }
+        .sidebar a:hover { background-color: #495057; }
+        .content { padding: 24px; }
+        .form-card { background: #fff; border-radius: 12px; padding: 32px; max-width: 560px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+        .hint { font-size: 0.82rem; color: #6c757d; margin-top: 4px; }
+    </style>
+</head>
+<body>
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-2 sidebar">
+            <h5 class="p-3">资产管理助手</h5>
+            <a href="/dashboard">仪表盘</a>
+            <a href="/assets">资产配置</a>
+            <a href="/dca">定投计划</a>
+    <a href="/goals">投资目标</a>
+            <a href="/stocks">股票/基金</a>
+            <a href="/warnings">预警管理</a>
+            <a href="/news">财经新闻</a>
+            <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+            <a href="/logout">退出登录</a>
+        </div>
+
+        <div class="col-md-10 content">
+            <div class="form-card">
+                <h5 class="mb-1">欢迎使用资产管理助手</h5>
+                <p class="text-muted small mb-4">先录入第一笔持仓，之后可以继续添加更多资产。</p>
+
+                <form th:action="@{/assets/init}" method="post">
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">资产类型 <span class="text-danger">*</span></label>
+                        <select class="form-select" id="type" name="type" required onchange="onTypeChange(this.value)">
+                            <option value="股票">股票</option>
+                            <option value="基金">基金</option>
+                            <option value="现金">现金</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">资产名称 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" name="name" placeholder="如：贵州茅台 / 易方达蓝筹精选" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">资产代码</label>
+                        <input type="text" class="form-control" name="code" placeholder="如：600519 / 005827（现金可不填）">
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold" id="amountLabel">持有数量（股）<span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" name="amount"
+                                   id="amountInput" placeholder="如：100"
+                                   min="0.01" step="0.01" required>
+                            <div class="hint" id="amountHint">股票填写实际持有股数</div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold" id="priceLabel">成本均价（元/股）<span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" name="purchasePrice"
+                                   id="priceInput" placeholder="如：1800.00"
+                                   min="0.0001" step="0.0001" required>
+                            <div class="hint" id="priceHint">填写买入时的每股均价</div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary px-4">开始使用</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const config = {
+        '股票': {
+            amountLabel: '持有数量（股）',
+            amountPlaceholder: '如：100',
+            amountHint: '填写实际持有股数',
+            priceLabel: '成本均价（元/股）',
+            pricePlaceholder: '如：1800.00',
+            priceHint: '填写买入时的每股均价'
+        },
+        '基金': {
+            amountLabel: '投入金额（元）',
+            amountPlaceholder: '如：10000.00',
+            amountHint: '填写在支付宝/基金平台的投入总金额，系统自动换算份额',
+            priceLabel: '购买净值（元/份）',
+            pricePlaceholder: '如：1.2345',
+            priceHint: '填写申购时的基金净值'
+        },
+        '现金': {
+            amountLabel: '现金金额（元）',
+            amountPlaceholder: '如：50000.00',
+            amountHint: '填写持有的现金总额',
+            priceLabel: '单位价格（固定1元）',
+            pricePlaceholder: '1',
+            priceHint: '现金单位价格固定为 1'
+        }
+    };
+
+    function onTypeChange(type) {
+        const c = config[type] || config['股票'];
+        document.getElementById('amountLabel').firstChild.textContent = c.amountLabel + ' ';
+        document.getElementById('amountInput').placeholder = c.amountPlaceholder;
+        document.getElementById('amountHint').textContent = c.amountHint;
+        document.getElementById('priceLabel').firstChild.textContent = c.priceLabel + ' ';
+        document.getElementById('priceInput').placeholder = c.pricePlaceholder;
+        document.getElementById('priceHint').textContent = c.priceHint;
+        if (type === '现金') {
+            document.getElementById('priceInput').value = '1';
+            document.getElementById('priceInput').readOnly = true;
+        } else {
+            document.getElementById('priceInput').readOnly = false;
+            if (document.getElementById('priceInput').value === '1') {
+                document.getElementById('priceInput').value = '';
+            }
+        }
+    }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

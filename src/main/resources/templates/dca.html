@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>定投计划 - 资产管理助手</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; }
+        .sidebar {
+            background-color: #343a40; color: white;
+            height: 100vh; position: fixed;
+            top: 0; left: 0; width: 210px; padding-top: 20px;
+        }
+        .sidebar a { color: white; padding: 10px 15px; display: block; text-decoration: none; }
+        .sidebar a:hover { background-color: #495057; }
+        .sidebar a.active { background-color: #0d6efd; }
+        .content { margin-left: 210px; padding: 24px; }
+        .plan-card { border-left: 4px solid #0d6efd; }
+        .plan-card.paused { border-left-color: #6c757d; opacity: .75; }
+        .plan-card.due { border-left-color: #fd7e14; }
+        .stat-label { font-size: .75rem; color: #6c757d; }
+        .stat-value { font-size: 1rem; font-weight: 600; }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h5 class="text-center mb-4">资产管理助手</h5>
+    <a href="/dashboard">仪表盘</a>
+    <a href="/assets">资产配置</a>
+    <a href="/dca" class="active">定投计划</a>
+    <a href="/stocks">股票/基金</a>
+    <a href="/warnings">预警管理</a>
+    <a href="/news">财经新闻</a>
+    <a href="/ai-advice">AI投资建议</a>
+    <a href="/portfolio-advice">投资组合建议</a>
+    <a href="/logout">退出登录</a>
+</div>
+
+<div class="content">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h4>📅 定投计划</h4>
+        <div class="d-flex gap-2">
+            <a href="/dca/run-now" class="btn btn-warning btn-sm"
+               onclick="return confirm('立即触发自动定投？系统将检查所有到期计划并执行。')">⚡ 立即执行</a>
+            <a href="/dca/add" class="btn btn-primary btn-sm">+ 新建计划</a>
+        </div>
+    </div>
+
+    <div th:if="${success}" class="alert alert-success alert-dismissible fade show py-2">
+        <span th:text="${success}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+
+    <!-- 空态 -->
+    <div th:if="${plans.empty}" class="text-center py-5 text-muted">
+        <div style="font-size:3rem;">📅</div>
+        <h5 class="mt-3">还没有定投计划</h5>
+        <p>定投是长期积累财富的有效策略，点击下方开始创建你的第一个计划。</p>
+        <a href="/dca/add" class="btn btn-primary">+ 新建定投计划</a>
+    </div>
+
+    <!-- 计划卡片列表 -->
+    <div th:each="view : ${plans}"
+         th:with="plan=${view.plan}, due=${view.due}, next=${view.nextDueDate},
+                  invested=${view.totalInvested}, periods=${view.totalPeriods}, avg=${view.avgCost}"
+         class="card shadow-sm mb-3 plan-card"
+         th:classappend="${plan.status == 'PAUSED'} ? ' paused' : (${due} ? ' due' : '')">
+        <div class="card-body">
+            <div class="row align-items-center">
+                <!-- 基本信息 -->
+                <div class="col-md-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <div>
+                            <span class="fw-bold" th:text="${plan.name}"></span>
+                            <span class="text-muted ms-1 small" th:text="'(' + ${plan.code} + ')'"></span>
+                        </div>
+                        <span th:if="${plan.status == 'PAUSED'}"
+                              class="badge bg-secondary" style="font-size:.7rem;">已暂停</span>
+                        <span th:if="${due and plan.status == 'ACTIVE'}"
+                              class="badge bg-warning text-dark" style="font-size:.7rem;">待执行</span>
+                    </div>
+                    <div class="text-muted small mt-1">
+                        <span th:text="${plan.frequency == 'MONTHLY'} ? '每月' + (plan.dayOfMonth != null ? plan.dayOfMonth + '号' : '') :
+                                        (plan.frequency == 'BIWEEKLY' ? '每两周' : (plan.frequency == 'WEEKLY' ? '每周' : '每日'))"></span>
+                        定投
+                        <strong th:text="${plan.amount} + ' 元'"></strong>
+                    </div>
+                    <div class="text-muted small" th:if="${plan.notes != null and !plan.notes.empty}"
+                         th:text="${plan.notes}"></div>
+                </div>
+
+                <!-- 统计数据 -->
+                <div class="col-md-6">
+                    <div class="row text-center g-2">
+                        <div class="col-3">
+                            <div class="stat-label">累计期数</div>
+                            <div class="stat-value" th:text="${periods} + ' 期'"></div>
+                        </div>
+                        <div class="col-3">
+                            <div class="stat-label">累计投入</div>
+                            <div class="stat-value" th:text="${invested} + ' 元'"></div>
+                        </div>
+                        <div class="col-3">
+                            <div class="stat-label">加权均价</div>
+                            <div class="stat-value"
+                                 th:text="${avg.compareTo(T(java.math.BigDecimal).ZERO) == 0} ? '--' : ${avg}"></div>
+                        </div>
+                        <div class="col-3">
+                            <div class="stat-label">下次执行</div>
+                            <div class="stat-value"
+                                 th:classappend="${due} ? 'text-warning' : ''"
+                                 th:text="${plan.status == 'PAUSED'} ? '--' : ${next}"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="col-md-3 text-end">
+                    <!-- 自动执行说明 -->
+                    <div class="text-muted small mb-2" th:if="${plan.status == 'ACTIVE'}">
+                        🤖 每日自动执行
+                    </div>
+                    <!-- 手动补录入口（异常情况兜底） -->
+                    <a th:if="${plan.status == 'ACTIVE'}"
+                       th:href="@{/dca/{id}/execute(id=${plan.id})}"
+                       class="btn btn-sm btn-outline-secondary me-1">手动补录</a>
+                    <a th:href="@{/dca/{id}/records(id=${plan.id})}"
+                       class="btn btn-sm btn-outline-secondary me-1">历史</a>
+                    <a th:href="@{/dca/{id}/edit(id=${plan.id})}"
+                       class="btn btn-sm btn-outline-secondary me-1">编辑</a>
+                    <a th:href="@{/dca/{id}/toggle(id=${plan.id})}"
+                       class="btn btn-sm btn-outline-secondary me-1"
+                       th:text="${plan.status == 'ACTIVE'} ? '暂停' : '恢复'"></a>
+                    <a th:href="@{/dca/{id}/delete(id=${plan.id})}"
+                       class="btn btn-sm btn-outline-danger"
+                       onclick="return confirm('确定删除该定投计划？历史记录也会一并删除。')">删除</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
