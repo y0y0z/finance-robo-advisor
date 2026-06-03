@@ -294,6 +294,10 @@ public class SmartWarningService {
      * 返回 score（-1~1，-1极度负面）和 reason（50字以内）
      */
     private SentimentResult callSentimentApi(String name, String code, List<News> news) throws Exception {
+        if (isBlank(deepSeekProps.getKey()) || isBlank(deepSeekProps.getUrl()) || isBlank(deepSeekProps.getModel())) {
+            throw new IllegalStateException("DeepSeek API 未配置，请设置 DEEPSEEK_API_KEY");
+        }
+
         StringBuilder sb = new StringBuilder();
         sb.append("你是一个金融情绪分析模型。以下是关于【").append(name).append("（").append(code).append("）】的近期新闻标题：\n");
         news.forEach(n -> sb.append("- ").append(n.getTitle()).append("\n"));
@@ -327,10 +331,14 @@ public class SmartWarningService {
                 .build();
 
         try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) throw new RuntimeException("HTTP " + response.code());
-            String raw = response.body().string();
+            String raw = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) throw new RuntimeException("HTTP " + response.code() + " " + raw);
             JsonNode root = objectMapper.readTree(raw);
-            String content = root.path("choices").get(0).path("message").path("content").asText();
+            JsonNode choices = root.path("choices");
+            if (!choices.isArray() || choices.isEmpty()) {
+                throw new RuntimeException("DeepSeek 返回空 choices: " + raw);
+            }
+            String content = choices.get(0).path("message").path("content").asText();
 
             // 提取 JSON（有时模型会在 JSON 前后加换行或反引号）
             int start = content.indexOf('{');
@@ -341,5 +349,9 @@ public class SmartWarningService {
             String reason = result.path("reason").asText("无分析理由");
             return new SentimentResult(score, reason);
         }
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 }

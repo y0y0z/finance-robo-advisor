@@ -572,6 +572,9 @@ public class AIService {
      * 调用 DeepSeek Chat API
      */
     private String callDeepSeekApi(String userPrompt) throws Exception {
+        if (isBlank(deepSeekProps.getKey()) || isBlank(deepSeekProps.getUrl()) || isBlank(deepSeekProps.getModel())) {
+            throw new AiServiceUnavailableException("DeepSeek API 未配置，请设置 DEEPSEEK_API_KEY");
+        }
         return callOpenAiCompatibleApi(
                 deepSeekProps.getUrl(),
                 deepSeekProps.getKey(),
