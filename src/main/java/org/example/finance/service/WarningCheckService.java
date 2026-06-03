@@ -62,8 +62,15 @@ public class WarningCheckService {
     private void checkSingleWarning(Warning warning) {
         Stock stock = stockService.getStockByCode(warning.getCode());
         if (stock == null) {
-            log.debug("预警 [{}({})] 未找到对应股票，跳过", warning.getName(), warning.getCode());
+            stock = stockService.ensureStockExists(warning.getUser(), warning.getCode(), warning.getName(), warning.getType(), warning.getMarket());
+        }
+        if (stock == null) {
+            log.debug("预警 [{}({})] 未在 stocks 行情表中找到对应标的，跳过", warning.getName(), warning.getCode());
             return;
+        }
+        if (warning.getMarket() == null || warning.getMarket().isBlank()) {
+            warning.setMarket(stock.getMarket());
+            warningRepository.save(warning);
         }
 
         BigDecimal currentPrice = stock.getPrice();

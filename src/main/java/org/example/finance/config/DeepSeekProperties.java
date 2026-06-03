@@ -14,7 +14,7 @@ public class DeepSeekProperties {
     private String key;
     private String url;
     private String model;
-    private int timeout = 60;
+    private int timeout = 300;
 
     public String getKey()    { return key; }
     public String getUrl()    { return url; }

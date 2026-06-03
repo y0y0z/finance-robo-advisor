@@ -69,16 +69,17 @@ public class AssetController {
     public String submitInitAssets(@RequestParam String type,
                                    @RequestParam String name,
                                    @RequestParam String code,
+                                   @RequestParam(required = false, defaultValue = "AUTO") String market,
                                    @RequestParam BigDecimal amount,
                                    @RequestParam BigDecimal purchasePrice,
                                    HttpSession session) {
         User user = (User) session.getAttribute(SessionKeys.USER);
 
         if (!"现金".equals(type) && code != null && !code.isBlank()) {
-            stockService.ensureStockExists(user, code, name, type);
+            stockService.ensureStockExists(user, code, name, type, market);
         }
 
-        Asset asset = buildAsset(user, type, name, code, amount, purchasePrice);
+        Asset asset = buildAsset(user, type, name, code, market, amount, purchasePrice);
         assetService.saveAsset(asset);
         log.info("用户 [{}] 初始化资产: {} ({})", user.getName(), name, code);
         return Routes.redirectTo(Routes.ASSETS);
@@ -93,16 +94,17 @@ public class AssetController {
     public String submitAddAsset(@RequestParam String type,
                                  @RequestParam String name,
                                  @RequestParam String code,
+                                 @RequestParam(required = false, defaultValue = "AUTO") String market,
                                  @RequestParam BigDecimal amount,
                                  @RequestParam BigDecimal purchasePrice,
                                  HttpSession session) {
         User user = (User) session.getAttribute(SessionKeys.USER);
 
         if (!"现金".equals(type) && code != null && !code.isBlank()) {
-            stockService.ensureStockExists(user, code, name, type);
+            stockService.ensureStockExists(user, code, name, type, market);
         }
 
-        Asset asset = buildAsset(user, type, name, code, amount, purchasePrice);
+        Asset asset = buildAsset(user, type, name, code, market, amount, purchasePrice);
         assetService.saveAsset(asset);
         log.info("用户 [{}] 添加资产: {} ({})", user.getName(), name, code);
         return Routes.redirectTo(Routes.ASSETS);
@@ -126,6 +128,7 @@ public class AssetController {
                                   @RequestParam String type,
                                   @RequestParam String name,
                                   @RequestParam String code,
+                                  @RequestParam(required = false, defaultValue = "AUTO") String market,
                                   @RequestParam BigDecimal amount,
                                   @RequestParam BigDecimal purchasePrice,
                                   @RequestParam BigDecimal currentPrice,
@@ -139,7 +142,8 @@ public class AssetController {
 
         asset.setType(type);
         asset.setName(name);
-        asset.setCode(code);
+        asset.setCode(stockService.normalizeCode(code));
+        asset.setMarket(stockService.normalizeMarket(type, code, market));
         asset.setAmount(amount);
         asset.setPurchasePrice(purchasePrice);
         asset.setCurrentPrice(currentPrice);
@@ -162,7 +166,7 @@ public class AssetController {
 
     /** 构建资产对象（消除 init 和 add 中的重复代码） */
     private Asset buildAsset(User user, String type, String name,
-                              String code, BigDecimal amount, BigDecimal purchasePrice) {
+                              String code, String market, BigDecimal amount, BigDecimal purchasePrice) {
         // 基金：用户填的是"投入金额"，需换算为份额
         BigDecimal actualAmount = toActualQuantity(type, amount, purchasePrice);
 
@@ -170,7 +174,8 @@ public class AssetController {
         asset.setUser(user);
         asset.setType(type);
         asset.setName(name);
-        asset.setCode(code);
+        asset.setCode(stockService.normalizeCode(code));
+        asset.setMarket(stockService.normalizeMarket(type, code, market));
         asset.setAmount(actualAmount);
         asset.setPurchasePrice(purchasePrice);
         asset.setPurchaseDate(new Date());

@@ -8,17 +8,19 @@ import okhttp3.Response;
 import org.example.finance.model.Stock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Optional;
 
 /**
  * 市场行情数据服务
  *
  * 数据来源：
- *   股票 → 东方财富行情 API（push2.eastmoney.com）
- *   基金 → 天天基金实时估值 API（fundgz.1234567.com.cn）
+ *   股票 / 基金 → Futu OpenD
+ *   天天基金仅作为基金可选兜底
  *
  * 调用链：StockPriceUpdateService → MarketDataService → 外部 API → 返回填充好的 Stock 对象
  */
@@ -38,23 +40,52 @@ public class MarketDataService {
 
     private final OkHttpClient client;
     private final ObjectMapper mapper;
+    private final FutuQuoteClient futuQuoteClient;
 
-    public MarketDataService(OkHttpClient client, ObjectMapper mapper) {
+    @Value("${marketdata.stock.eastmoney-fallback-enabled:false}")
+    private boolean eastmoneyFallbackEnabled;
+
+    @Value("${marketdata.fund.eastmoney-fallback-enabled:false}")
+    private boolean fundFallbackEnabled;
+
+    public MarketDataService(OkHttpClient client, ObjectMapper mapper, FutuQuoteClient futuQuoteClient) {
         this.client = client;
         this.mapper = mapper;
+        this.futuQuoteClient = futuQuoteClient;
     }
-
-    // ─────────────────────────────────────────────
-    // 公开方法
-    // ─────────────────────────────────────────────
 
     /**
      * 获取股票实时行情，成功则更新 stock 字段并返回 true，失败返回 false
      */
     public boolean fetchStockPrice(Stock stock) {
+        Optional<QuoteSnapshot> snapshot = futuQuoteClient.getQuote(stock.getCode(), stock.getMarket());
+        if (snapshot.isPresent()) {
+            applyQuote(stock, snapshot.get());
+            log.debug("Futu 股票行情 [{}({})]：价格={} 涨跌幅={}%",
+                    stock.getName(), stock.getCode(), stock.getPrice(), stock.getChangePercent());
+            return true;
+        }
+        if (eastmoneyFallbackEnabled) {
+            return fetchStockPriceFromEastmoney(stock);
+        }
+        return false;
+    }
+
+    private void applyQuote(Stock stock, QuoteSnapshot quote) {
+        stock.setPrice(quote.price());
+        stock.setPriceChange(quote.priceChange() != null ? quote.priceChange() : BigDecimal.ZERO);
+        stock.setChangePercent(quote.changePercent() != null ? quote.changePercent() : BigDecimal.ZERO);
+        if (quote.pe() != null) stock.setPe(quote.pe());
+        if (quote.pb() != null) stock.setPb(quote.pb());
+        if ((stock.getName() == null || stock.getName().isBlank()) && quote.name() != null && !quote.name().isBlank()) {
+            stock.setName(quote.name());
+        }
+    }
+
+    private boolean fetchStockPriceFromEastmoney(Stock stock) {
         String secid = buildSecId(stock.getCode());
         if (secid == null) {
-            log.warn("无法识别股票代码 [{}] 的市场，跳过行情拉取", stock.getCode());
+            log.warn("无法识别股票代码 [{}] 的东方财富市场，跳过兜底行情拉取", stock.getCode());
             return false;
         }
 
@@ -65,8 +96,7 @@ public class MarketDataService {
         try {
             JsonNode data = mapper.readTree(body).path("data");
             if (data.isMissingNode() || data.isNull()) {
-                log.warn("股票 [{}({})] 行情接口返回空数据（可能停牌或代码有误）",
-                        stock.getName(), stock.getCode());
+                log.warn("股票 [{}({})] 东方财富行情返回空数据", stock.getName(), stock.getCode());
                 return false;
             }
 
@@ -77,42 +107,40 @@ public class MarketDataService {
             BigDecimal pb          = decimal(data, "f167");
 
             if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
-                log.warn("股票 [{}({})] 价格异常（{}），跳过本次更新",
-                        stock.getName(), stock.getCode(), price);
+                log.warn("股票 [{}({})] 东方财富价格异常（{}），跳过本次更新", stock.getName(), stock.getCode(), price);
                 return false;
             }
 
-            stock.setPrice(price);
-            stock.setPriceChange(priceChange != null ? priceChange : BigDecimal.ZERO);
-            stock.setChangePercent(changePct  != null ? changePct  : BigDecimal.ZERO);
-            if (pe != null) stock.setPe(pe);
-            if (pb != null) stock.setPb(pb);
-
-            log.debug("股票行情 [{}({})]：价格={} 涨跌幅={}%",
-                    stock.getName(), stock.getCode(), price, changePct);
+            applyQuote(stock, new QuoteSnapshot(price, priceChange, changePct, pe, pb, null));
             return true;
-
         } catch (Exception e) {
-            log.error("解析股票行情响应失败 [{}({})]：{}", stock.getName(), stock.getCode(), e.getMessage());
+            log.error("解析东方财富股票行情响应失败 [{}({})]：{}", stock.getName(), stock.getCode(), e.getMessage());
             return false;
         }
     }
 
     /**
-     * 获取基金实时估值，成功则更新 stock 字段并返回 true，失败返回 false
-     *
-     * 接口说明：
-     *   gsz    → 今日实时估算净值（交易时段有值，非交易时段为 "0" 或空）
-     *   gszzl  → 今日估算涨跌幅（%）
-     *   dwjz   → 昨日单位净值（作为 gsz 不可用时的兜底）
+     * 获取基金实时行情，优先使用 Futu OpenD；天天基金仅在显式开启时兜底。
      */
     public boolean fetchFundPrice(Stock stock) {
+        Optional<QuoteSnapshot> snapshot = futuQuoteClient.getQuote(stock.getCode(), stock.getMarket());
+        if (snapshot.isPresent()) {
+            applyQuote(stock, snapshot.get());
+            stock.setNav(stock.getPrice());
+            log.debug("Futu 基金行情 [{}({})]：净值={} 涨跌幅={}%",
+                    stock.getName(), stock.getCode(), stock.getPrice(), stock.getChangePercent());
+            return true;
+        }
+        if (!fundFallbackEnabled) {
+            return false;
+        }
+
         String url = String.format(FUND_ESTIMATE_URL, stock.getCode(), System.currentTimeMillis());
         String body = httpGet(url);
         if (body == null) return false;
 
         try {
-            // 解析 JSONP：jsonpgz({...});  →  取括号内的 JSON
+            // 解析 JSONP 取括号内的 JSON
             int start = body.indexOf('(');
             int end   = body.lastIndexOf(')');
             if (start < 0 || end <= start) {

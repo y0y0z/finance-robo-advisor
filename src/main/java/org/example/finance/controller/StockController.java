@@ -50,16 +50,17 @@ public class StockController {
     public String submitAddStock(@RequestParam String code,
                                  @RequestParam String name,
                                  @RequestParam String type,
+                                 @RequestParam(required = false, defaultValue = "AUTO") String market,
                                  HttpSession session) {
         User user = (User) session.getAttribute(SessionKeys.USER);
 
-        if (stockService.getStockByUserAndCode(user, code) != null) {
-            log.warn("用户 [{}] 重复添加代码: {}", user.getName(), code);
+        if (stockService.getStockByUserAndCodeAndMarket(user, code, market) != null) {
+            log.warn("用户 [{}] 重复添加代码: {} market={}", user.getName(), code, market);
             return Routes.redirectTo(Routes.STOCKS_DUPLICATE);
         }
 
-        stockService.ensureStockExists(user, code, name, type);
-        log.info("用户 [{}] 添加关注: {} ({})", user.getName(), name, code);
+        stockService.ensureStockExists(user, code, name, type, market);
+        log.info("用户 [{}] 添加关注: {} ({}) market={}", user.getName(), name, code, market);
         return Routes.redirectTo(Routes.STOCKS);
     }
 
@@ -81,6 +82,7 @@ public class StockController {
                                   @RequestParam String code,
                                   @RequestParam String name,
                                   @RequestParam String type,
+                                  @RequestParam(required = false, defaultValue = "AUTO") String market,
                                   @RequestParam(required = false) BigDecimal pe,
                                   @RequestParam(required = false) BigDecimal pb,
                                   @RequestParam(required = false) BigDecimal nav,
@@ -94,9 +96,10 @@ public class StockController {
         }
 
         // 只允许修改基础信息，price/changePercent 由定时任务维护
-        stock.setCode(code);
+        stock.setCode(stockService.normalizeCode(code));
         stock.setName(name);
         stock.setType(type);
+        stock.setMarket(stockService.normalizeMarket(type, code, market));
         stock.setPe(pe);
         stock.setPb(pb);
         stock.setNav(nav);

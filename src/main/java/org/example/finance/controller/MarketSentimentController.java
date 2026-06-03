@@ -37,7 +37,8 @@ public class MarketSentimentController {
                     "downCount", 0,
                     "flatCount", 0,
                     "totalCount", 0,
-                    "updateTime", "--:--:--"
+                    "updateTime", "--:--:--",
+                    "isTrading", false
             ));
         }
         return ResponseEntity.ok(Map.of(
@@ -48,7 +49,8 @@ public class MarketSentimentController {
                 "downCount",  s.downCount(),
                 "flatCount",  s.flatCount(),
                 "totalCount", s.totalCount(),
-                "updateTime", s.updateTime()
+                "updateTime", s.updateTime(),
+                "isTrading", s.isTrading()
         ));
     }
 }

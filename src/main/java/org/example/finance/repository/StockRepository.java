@@ -16,4 +16,6 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
 
     /** 查询某用户关注的指定代码（用户隔离版，避免跨用户冲突） */
     Stock findByUserAndCode(User user, String code);
+
+    Stock findByUserAndCodeAndMarket(User user, String code, String market);
 }

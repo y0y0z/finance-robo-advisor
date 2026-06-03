@@ -292,7 +292,8 @@ public class AiPromptService {
         reviewPrompt.append("请不要根据篇幅、语言风格或猜测的模型来源评分，只根据内容是否正确利用用户数据评分。\n");
         reviewPrompt.append("评分维度均为 0-5 分：profileConsistency、holdingSpecificity、marketSentimentUse、newsUse、goalConsistency、riskWarning、actionability、safety。\n");
         reviewPrompt.append("其中 profileConsistency 不是看是否提到画像，而是判断建议是否符合风险等级、最大亏损承受能力、投资期限和流动性需求；其它维度也按是否正确利用数据评分。\n");
-        reviewPrompt.append("必须为下面每一个候选都输出一条评分记录，candidate 字段必须原样使用候选编号。\n");
+        reviewPrompt.append("必须为下面每一个候选都输出一条评分记录，候选 A/B/C 全部出现时 scores 必须正好包含 A、B、C 三条记录，candidate 字段必须原样使用候选编号。\n");
+        reviewPrompt.append("不要漏评、合并或新增候选；如果上下文很长，也必须先保证每个候选都有评分。\n");
         reviewPrompt.append("只输出一个 JSON 对象，不要输出 Markdown 代码块、解释文字或额外字段。JSON 格式必须严格如下：\n");
         reviewPrompt.append("{\"scores\":[{\"candidate\":\"A\",\"profileConsistency\":4,\"holdingSpecificity\":4,\"marketSentimentUse\":3,\"newsUse\":3,\"goalConsistency\":4,\"riskWarning\":5,\"actionability\":4,\"safety\":5,\"reason\":\"...\"}]}\n");
         reviewPrompt.append("如果只有候选 A/B/C，也只能使用 A/B/C，不要使用模型名、中文候选名或序号。\n\n");

@@ -24,6 +24,7 @@ public class Warning {
     private String type;               // 股票、基金
     private String name;
     private String code;               // 股票/基金代码
+    private String market;
     private BigDecimal warningPoint;   // 警告价格线
     private String meaning;            // 含义说明
     private BigDecimal stopProfitPoint; // 止盈价格线

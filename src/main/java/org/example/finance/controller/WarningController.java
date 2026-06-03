@@ -47,6 +47,7 @@ public class WarningController {
     public String submitAddWarning(@RequestParam String type,
                                    @RequestParam String name,
                                    @RequestParam String code,
+                                   @RequestParam(required = false, defaultValue = "AUTO") String market,
                                    @RequestParam(required = false) BigDecimal warningPoint,
                                    @RequestParam String meaning,
                                    @RequestParam(required = false) BigDecimal stopProfitPoint,
@@ -54,14 +55,15 @@ public class WarningController {
                                    HttpSession session) {
         User user = (User) session.getAttribute(SessionKeys.USER);
 
-        stockService.ensureStockExists(user, code, name, type);
-        log.info("用户 [{}] 新增预警: {} ({})", user.getName(), name, code);
+        stockService.ensureStockExists(user, code, name, type, market);
+        log.info("用户 [{}] 新增预警: {} ({}) market={}", user.getName(), name, code, market);
 
         Warning warning = new Warning();
         warning.setUser(user);
         warning.setType(type);
         warning.setName(name);
-        warning.setCode(code);
+        warning.setCode(stockService.normalizeCode(code));
+        warning.setMarket(stockService.normalizeMarket(type, code, market));
         warning.setWarningPoint(warningPoint);
         warning.setMeaning(meaning);
         warning.setStopProfitPoint(stopProfitPoint);
@@ -89,6 +91,7 @@ public class WarningController {
                                     @RequestParam String type,
                                     @RequestParam String name,
                                     @RequestParam String code,
+                                    @RequestParam(required = false, defaultValue = "AUTO") String market,
                                     @RequestParam(required = false) BigDecimal warningPoint,
                                     @RequestParam String meaning,
                                     @RequestParam(required = false) BigDecimal stopProfitPoint,
@@ -103,7 +106,8 @@ public class WarningController {
 
         warning.setType(type);
         warning.setName(name);
-        warning.setCode(code);
+        warning.setCode(stockService.normalizeCode(code));
+        warning.setMarket(stockService.normalizeMarket(type, code, market));
         warning.setWarningPoint(warningPoint);
         warning.setMeaning(meaning);
         warning.setStopProfitPoint(stopProfitPoint);

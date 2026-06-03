@@ -67,7 +67,7 @@
                 <form th:action="@{/stocks/edit/{id}(id=${stock.id})}" method="post">
                     <div class="mb-3">
                         <label for="code" class="form-label">代码</label>
-                        <input type="text" class="form-control" id="code" name="code" th:value="${stock.code}" required>
+                        <input type="text" class="form-control" id="code" name="code" th:value="${stock.code}" maxlength="16" required>
                     </div>
                     <div class="mb-3">
                         <label for="name" class="form-label">名称</label>
@@ -75,7 +75,7 @@
                     </div>
                     <div class="mb-3">
                         <label for="type" class="form-label">类型</label>
-                        <select class="form-select" id="type" name="type" required>
+                        <select class="form-select" id="type" name="type" required onchange="toggleMarket(this.value)">
                             <option th:value="'股票'" th:selected="${stock.type == '股票'}">股票</option>
                             <option th:value="'基金'" th:selected="${stock.type == '基金'}">基金</option>
                         </select>
@@ -92,9 +92,15 @@
                         <label for="changePercent" class="form-label">涨跌幅</label>
                         <input type="number" step="0.01" class="form-control" id="changePercent" name="changePercent" th:value="${stock.changePercent}" required>
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3" id="marketGroup">
                         <label for="market" class="form-label">市场</label>
-                        <input type="text" class="form-control" id="market" name="market" th:value="${stock.market}" required>
+                        <select class="form-select" id="market" name="market">
+                            <option value="AUTO">自动识别</option>
+                            <option value="CN_SH" th:selected="${stock.market == 'CN_SH'}">A股-沪市</option>
+                            <option value="CN_SZ" th:selected="${stock.market == 'CN_SZ'}">A股-深市</option>
+                            <option value="HK" th:selected="${stock.market == 'HK'}">港股</option>
+                            <option value="US" th:selected="${stock.market == 'US'}">美股</option>
+                        </select>
                     </div>
                     <div class="mb-3">
                         <label for="pe" class="form-label">市盈率</label>
@@ -113,5 +119,11 @@
             </div>
         </div>
     </div>
+<script>
+    function toggleMarket(type) {
+        document.getElementById('marketGroup').style.display = type === '股票' ? 'block' : 'none';
+    }
+    toggleMarket(document.getElementById('type').value);
+</script>
 </body>
 </html>

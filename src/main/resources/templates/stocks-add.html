@@ -44,8 +44,8 @@
                 <div class="mb-3">
                     <label for="code" class="form-label fw-semibold">股票/基金代码</label>
                     <input type="text" class="form-control" id="code" name="code"
-                           placeholder="如：600519、000001、110011"
-                           maxlength="8" autocomplete="off" required>
+                           placeholder="如：600519、09992、AAPL、110011"
+                           maxlength="16" autocomplete="off" required>
                 </div>
 
                 <div class="mb-3">
@@ -56,10 +56,22 @@
 
                 <div class="mb-3">
                     <label for="type" class="form-label fw-semibold">类型</label>
-                    <select class="form-select" id="type" name="type" required>
+                    <select class="form-select" id="type" name="type" required onchange="toggleMarket(this.value)">
                         <option value="股票">股票</option>
                         <option value="基金">基金</option>
                     </select>
+                </div>
+
+                <div class="mb-3" id="marketGroup">
+                    <label for="market" class="form-label fw-semibold">市场</label>
+                    <select class="form-select" id="market" name="market">
+                        <option value="AUTO">自动识别</option>
+                        <option value="CN_SH">A股-沪市</option>
+                        <option value="CN_SZ">A股-深市</option>
+                        <option value="HK">港股</option>
+                        <option value="US">美股</option>
+                    </select>
+                    <div class="form-text">港股如 09992，美股如 AAPL；A 股建议选择沪市/深市。</div>
                 </div>
 
                 <div class="d-grid gap-2">
@@ -72,5 +84,11 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    function toggleMarket(type) {
+        document.getElementById('marketGroup').style.display = type === '股票' ? 'block' : 'none';
+    }
+    toggleMarket(document.getElementById('type').value);
+</script>
 </body>
 </html>

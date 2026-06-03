@@ -285,7 +285,7 @@
                             th:text="${stock.priceChange}"></td>
                         <td th:classappend="${stock.changePercent != null and stock.changePercent.compareTo(T(java.math.BigDecimal).ZERO) >= 0 ? 'up' : 'down'}"
                             th:text="${stock.changePercent} + '%'"></td>
-                        <td th:text="${stock.market}"></td>
+                        <td th:text="${stock.marketDisplay}"></td>
                         <td>
                             <a th:href="@{/stocks/edit/{id}(id=${stock.id})}" class="btn btn-sm btn-outline-primary">编辑</a>
                             <a th:href="@{/stocks/delete/{id}(id=${stock.id})}" class="btn btn-sm btn-outline-danger"
@@ -449,7 +449,6 @@
                 document.getElementById('sentiment-update').textContent = '更新于 ' + d.updateTime;
 
                 if (!d.isTrading) {
-                    // 休市状态：隐藏分值，只显示等级和涨跌数（上次收盘数据）
                     document.getElementById('sentiment-score').textContent = '--';
                     document.getElementById('sentiment-score').style.color = d.color;
                 } else {

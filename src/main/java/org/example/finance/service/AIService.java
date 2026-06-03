@@ -24,6 +24,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -65,6 +66,8 @@ public class AIService {
     private String qwenUrl;
     @Value("${qwen.api.model:qwen-plus}")
     private String qwenModel;
+    @Value("${qwen.api.timeout:300}")
+    private int qwenTimeout;
 
     @Value("${glm.api.key:}")
     private String glmKey;
@@ -72,7 +75,7 @@ public class AIService {
     private String glmUrl;
     @Value("${glm.api.model:glm-4.7-flash}")
     private String glmModel;
-    @Value("${glm.api.timeout:120}")
+    @Value("${glm.api.timeout:300}")
     private int glmTimeout;
 
     @Value("${kimi.api.key:}")
@@ -81,7 +84,7 @@ public class AIService {
     private String kimiUrl;
     @Value("${kimi.api.model:kimi-k2.6}")
     private String kimiModel;
-    @Value("${kimi.api.timeout:180}")
+    @Value("${kimi.api.timeout:300}")
     private int kimiTimeout;
 
     /**
@@ -150,10 +153,11 @@ public class AIService {
     }
 
     private String generateReviewedPortfolioAdvice(String prompt) throws Exception {
+        List<CandidateGenerationStatus> generationStatuses = Collections.synchronizedList(new ArrayList<>());
         List<CompletableFuture<AdviceCandidate>> tasks = List.of(
-                generateCandidateAsync("DeepSeek", deepSeekProps.getUrl(), deepSeekProps.getKey(), deepSeekProps.getModel(), deepSeekProps.getTimeout(), prompt),
-                generateCandidateAsync("Kimi", kimiUrl, kimiKey, kimiModel, kimiTimeout, prompt),
-                generateCandidateAsync("GLM", glmUrl, glmKey, glmModel, glmTimeout, prompt)
+                generateCandidateAsync("DeepSeek", deepSeekProps.getUrl(), deepSeekProps.getKey(), deepSeekProps.getModel(), deepSeekProps.getTimeout(), prompt, generationStatuses),
+                generateCandidateAsync("Kimi", kimiUrl, kimiKey, kimiModel, kimiTimeout, prompt, generationStatuses),
+                generateCandidateAsync("GLM", glmUrl, glmKey, glmModel, glmTimeout, prompt, generationStatuses)
         );
         CompletableFuture.allOf(tasks.toArray(new CompletableFuture[0])).join();
 
@@ -163,11 +167,11 @@ public class AIService {
                 .toList());
 
         if (candidates.isEmpty()) {
-            throw new AiServiceUnavailableException("当前没有可用的 AI 候选模型，请检查 API Key 配置或稍后重试");
+            throw new AiServiceUnavailableException("当前没有可用的 AI 候选模型：" + summarizeCandidateFailures(generationStatuses));
         }
         if (candidates.size() == 1 || isBlank(qwenKey)) {
             AdviceCandidate only = candidates.get(0);
-            return only.content() + buildSingleCandidateNote(only);
+            return buildCandidateGenerationNote(generationStatuses) + only.content() + buildSingleCandidateNote(only);
         }
 
         Collections.shuffle(candidates);
@@ -184,36 +188,47 @@ public class AIService {
                     .filter(c -> "DeepSeek".equals(c.provider()))
                     .findFirst()
                     .orElse(candidates.get(0));
-            return first.content() + buildReviewFailureNote(first, e.getMessage());
+            return buildCandidateGenerationNote(generationStatuses) + first.content() + buildReviewFailureNote(first, e.getMessage());
         }
 
         AdviceCandidate selected = candidates.stream()
                 .max(Comparator.comparingInt(c -> review.totalScore(c.code())))
                 .orElse(candidates.get(0));
 
-        return selected.content() + buildReviewSummary(selected, review);
+        return buildCandidateGenerationNote(generationStatuses) + selected.content() + buildReviewSummary(selected, review);
     }
 
     private CompletableFuture<AdviceCandidate> generateCandidateAsync(String provider, String url, String key,
-                                                                      String model, int timeoutSeconds, String prompt) {
-        return CompletableFuture.supplyAsync(() -> generateCandidate(provider, url, key, model, timeoutSeconds, prompt));
+                                                                      String model, int timeoutSeconds, String prompt,
+                                                                      List<CandidateGenerationStatus> statuses) {
+        return CompletableFuture.supplyAsync(() -> generateCandidate(provider, url, key, model, timeoutSeconds, prompt, statuses));
     }
 
-    private AdviceCandidate generateCandidate(String provider, String url, String key, String model, int timeoutSeconds, String prompt) {
+    private AdviceCandidate generateCandidate(String provider, String url, String key, String model, int timeoutSeconds,
+                                              String prompt, List<CandidateGenerationStatus> statuses) {
         if (isBlank(key) || isBlank(url) || isBlank(model)) {
-            log.info("Skip {} candidate because API config is incomplete", provider);
+            String reason = "API 配置不完整";
+            log.warn("{} candidate skipped: {}", provider, reason);
+            statuses.add(CandidateGenerationStatus.failed(provider, reason));
             return null;
         }
         try {
             boolean kimiProvider = "Kimi".equals(provider);
             double temperature = kimiProvider ? 1.0 : 0.7;
-            int maxTokens = kimiProvider ? 2500 : 4000;
+            int maxTokens = kimiProvider ? 12000 : 8000;
             String content = callOpenAiCompatibleApi(url, key, model, prompt,
                     aiPromptService.buildPortfolioCandidateSystemPrompt(),
                     temperature, maxTokens, timeoutSeconds);
+            if (isBlank(content)) {
+                throw new IllegalStateException("模型返回空内容");
+            }
+            statuses.add(CandidateGenerationStatus.success(provider));
+            log.info("{} candidate generated, length={}", provider, content.length());
             return new AdviceCandidate("", provider, content);
         } catch (Exception e) {
-            log.warn("{} candidate generation failed: {}", provider, e.getMessage());
+            String reason = e.getMessage();
+            log.warn("{} candidate generation failed: {}", provider, reason, e);
+            statuses.add(CandidateGenerationStatus.failed(provider, reason));
             return null;
         }
     }
@@ -227,8 +242,10 @@ public class AIService {
 
         String json = callOpenAiCompatibleApi(qwenUrl, qwenKey, qwenModel, reviewPrompt,
                 aiPromptService.buildReviewSystemPrompt(),
-                0.2, 2000, deepSeekProps.getTimeout());
-        return parseReviewResult(json);
+                0.2, 4000, qwenTimeout);
+        ReviewResult review = parseReviewResult(json);
+        validateReviewCoverage(review, candidates, json);
+        return review;
     }
 
     private ReviewResult parseReviewResult(String raw) throws Exception {
@@ -258,6 +275,20 @@ public class AIService {
             throw new IllegalArgumentException("review scores are empty");
         }
         return new ReviewResult(scores);
+    }
+
+    private void validateReviewCoverage(ReviewResult review, List<AdviceCandidate> candidates, String raw) {
+        Set<String> scoredCodes = review.scores().stream()
+                .map(score -> score.candidate().trim().toUpperCase())
+                .collect(java.util.stream.Collectors.toSet());
+        List<String> missingCodes = candidates.stream()
+                .map(AdviceCandidate::code)
+                .filter(code -> !scoredCodes.contains(code.toUpperCase()))
+                .toList();
+        if (!missingCodes.isEmpty()) {
+            log.warn("Qwen review missed candidates {}. Raw response: {}", missingCodes, limitText(raw, 1000));
+            throw new IllegalArgumentException("Qwen 评审漏评候选 " + String.join("/", missingCodes));
+        }
     }
 
     private JsonNode findScoreNodes(JsonNode root) {
@@ -332,6 +363,27 @@ public class AIService {
                 + "- 系统采用候选 " + candidate.code() + " 作为本次最终建议。\n";
     }
 
+    private String buildCandidateGenerationNote(List<CandidateGenerationStatus> statuses) {
+        if (statuses.isEmpty()) {
+            return "";
+        }
+        StringBuilder md = new StringBuilder("## 候选模型生成状态\n\n");
+        for (CandidateGenerationStatus status : statuses) {
+            md.append("- ").append(status.provider()).append("：")
+                    .append(status.success() ? "成功" : "失败（" + status.reason() + "）")
+                    .append("\n");
+        }
+        return md.toString();
+    }
+
+    private String summarizeCandidateFailures(List<CandidateGenerationStatus> statuses) {
+        return statuses.stream()
+                .filter(status -> !status.success())
+                .map(status -> status.provider() + "=" + status.reason())
+                .reduce((left, right) -> left + "; " + right)
+                .orElse("无候选返回");
+    }
+
     private String callOpenAiCompatibleApi(String url, String key, String model, String userPrompt,
                                            String systemPrompt, double temperature, int maxTokens) throws Exception {
         return callOpenAiCompatibleApi(url, key, model, userPrompt, systemPrompt, temperature, maxTokens,
@@ -378,7 +430,22 @@ public class AIService {
                 throw new RuntimeException("LLM API error: HTTP " + response.code() + " " + responseBody);
             }
             JsonNode jsonNode = objectMapper.readTree(responseBody);
-            return jsonNode.path("choices").get(0).path("message").path("content").asText();
+            JsonNode firstChoice = jsonNode.path("choices").isArray() && !jsonNode.path("choices").isEmpty()
+                    ? jsonNode.path("choices").get(0)
+                    : null;
+            if (firstChoice == null) {
+                throw new RuntimeException("LLM API returned no choices: " + limitText(responseBody, 1000));
+            }
+            String content = firstChoice.path("message").path("content").asText("");
+            if (isBlank(content)) {
+                String finishReason = firstChoice.path("finish_reason").asText("");
+                String refusal = firstChoice.path("message").path("refusal").asText("");
+                throw new RuntimeException("LLM API returned empty content"
+                        + (finishReason.isBlank() ? "" : ", finish_reason=" + finishReason)
+                        + (refusal.isBlank() ? "" : ", refusal=" + refusal)
+                        + ", response=" + limitText(responseBody, 1000));
+            }
+            return content;
         }
     }
 
@@ -410,6 +477,16 @@ public class AIService {
     private record AdviceCandidate(String code, String provider, String content) {
         AdviceCandidate withCode(String newCode) {
             return new AdviceCandidate(newCode, provider, content);
+        }
+    }
+
+    private record CandidateGenerationStatus(String provider, boolean success, String reason) {
+        static CandidateGenerationStatus success(String provider) {
+            return new CandidateGenerationStatus(provider, true, "");
+        }
+
+        static CandidateGenerationStatus failed(String provider, String reason) {
+            return new CandidateGenerationStatus(provider, false, reason == null || reason.isBlank() ? "未知错误" : reason);
         }
     }
 
@@ -502,7 +579,7 @@ public class AIService {
                 userPrompt,
                 aiPromptService.buildDefaultAdviceSystemPrompt(),
                 0.7,
-                4000);
+                8000);
     }
 
     /**

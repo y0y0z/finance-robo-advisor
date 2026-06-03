@@ -182,6 +182,12 @@ public class MarketSentimentService {
             else                  { level = "极度恐惧"; color = "#6f42c1"; }
         }
 
+        if (!isTrading) {
+            upCount = 0;
+            downCount = 0;
+            flatCount = 0;
+        }
+
         String updateTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
         return new MarketSentiment(score, level, color, upCount, downCount, flatCount,
                 upCount + downCount + flatCount, updateTime, isTrading);

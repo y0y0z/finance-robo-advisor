@@ -38,5 +38,18 @@ public class Stock {
     private BigDecimal pe;        // 市盈率
     private BigDecimal pb;        // 市净率
     private BigDecimal nav;       // 基金净值
+
+    @Transient
+    public String getMarketDisplay() {
+        if (market == null) return "未知";
+        return switch (market) {
+            case "CN_SH" -> "A股-沪市";
+            case "CN_SZ" -> "A股-深市";
+            case "HK" -> "港股";
+            case "US" -> "美股";
+            case "FUND" -> "基金";
+            default -> market;
+        };
+    }
 }
 

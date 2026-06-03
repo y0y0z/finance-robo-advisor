@@ -67,7 +67,7 @@
                 <form th:action="@{/assets/edit/{id}(id=${asset.id})}" method="post">
                     <div class="mb-3">
                         <label for="type" class="form-label">资产类型</label>
-                        <select class="form-select" id="type" name="type" required>
+                        <select class="form-select" id="type" name="type" required onchange="toggleMarket(this.value)">
                             <option th:value="'股票'" th:selected="${asset.type == '股票'}">股票</option>
                             <option th:value="'基金'" th:selected="${asset.type == '基金'}">基金</option>
                             <option th:value="'现金'" th:selected="${asset.type == '现金'}">现金</option>
@@ -79,7 +79,17 @@
                     </div>
                     <div class="mb-3">
                         <label for="code" class="form-label">资产代码</label>
-                        <input type="text" class="form-control" id="code" name="code" th:value="${asset.code}" required>
+                        <input type="text" class="form-control" id="code" name="code" th:value="${asset.code}" maxlength="16" required>
+                    </div>
+                    <div class="mb-3" id="marketGroup">
+                        <label for="market" class="form-label">市场</label>
+                        <select class="form-select" id="market" name="market">
+                            <option value="AUTO">自动识别</option>
+                            <option value="CN_SH" th:selected="${asset.market == 'CN_SH'}">A股-沪市</option>
+                            <option value="CN_SZ" th:selected="${asset.market == 'CN_SZ'}">A股-深市</option>
+                            <option value="HK" th:selected="${asset.market == 'HK'}">港股</option>
+                            <option value="US" th:selected="${asset.market == 'US'}">美股</option>
+                        </select>
                     </div>
                     <div class="mb-3">
                         <label for="amount" class="form-label">数量</label>
@@ -98,5 +108,11 @@
             </div>
         </div>
     </div>
+<script>
+    function toggleMarket(type) {
+        document.getElementById('marketGroup').style.display = type === '股票' ? 'block' : 'none';
+    }
+    toggleMarket(document.getElementById('type').value);
+</script>
 </body>
 </html>

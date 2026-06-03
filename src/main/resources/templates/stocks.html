@@ -135,7 +135,7 @@
                         <!-- 持有涨跌幅 -->
                         <td th:classappend="${vo.holdDir}" th:text="${vo.holdChangePct}"></td>
 
-                        <td th:text="${vo.stock.market}"></td>
+                        <td th:text="${vo.stock.marketDisplay}"></td>
                         <td th:text="${vo.stock.pe != null ? vo.stock.pe : '-'}"></td>
                         <td th:text="${vo.stock.pb != null ? vo.stock.pb : '-'}"></td>
                         <td th:text="${vo.stock.nav != null ? vo.stock.nav : '-'}"></td>

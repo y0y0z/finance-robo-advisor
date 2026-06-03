@@ -53,11 +53,16 @@ public class AssetPriceUpdateService {
             return;
         }
 
-        // 从 stocks 表读最新价格（StockPriceUpdateService 已更新完毕）
         Stock stock = stockService.getStockByCode(code);
         if (stock == null) {
-            log.warn("资产 [{}({})] 未在关注列表中找到对应股票，跳过价格同步", asset.getName(), code);
+            stock = stockService.ensureStockExists(asset.getUser(), code, asset.getName(), asset.getType(), asset.getMarket());
+        }
+        if (stock == null) {
+            log.warn("资产 [{}({})] 未在 stocks 行情表中找到对应标的，跳过价格同步", asset.getName(), code);
             return;
+        }
+        if (asset.getMarket() == null || asset.getMarket().isBlank()) {
+            asset.setMarket(stock.getMarket());
         }
 
         BigDecimal currentPrice = stock.getPrice();

@@ -37,6 +37,8 @@ public class Asset {
      */
     private String code;
 
+    private String market;
+
     /**
      * 持有数量（股票/基金单位：股/份；现金单位：元）
      * 注：现金类资产 purchasePrice 固定为 1.0，amount 即为现金金额
